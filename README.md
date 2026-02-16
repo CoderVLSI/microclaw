@@ -5,8 +5,6 @@
 
 MicroClaw is an ESP32-based autonomous Telegram agent. It runs directly on-device, executes only allowlisted tools, supports optional LLM providers, and can schedule reminders/web jobs while keeping state in NVS.
 
-> If the banner does not render, add your provided image to `assets/microclaw-banner.png`.
-
 ## Overview
 
 - Primary firmware target: `wroom_brain_pio` (Arduino + PlatformIO, actively used)
