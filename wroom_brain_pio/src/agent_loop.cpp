@@ -8,6 +8,7 @@
 #include "llm_client.h"
 #include "persona_store.h"
 #include "event_log.h"
+#include "status_led.h"
 #include "task_store.h"
 #include "tool_registry.h"
 #include "transport_telegram.h"
@@ -65,12 +66,21 @@ static void send_and_record(const String &incoming, const String &outgoing) {
   event_log_append("OUT: " + outgoing);
   transport_telegram_send(outgoing);
   record_chat_turn(incoming, outgoing);
+  if (outgoing.startsWith("ERR:")) {
+    status_led_notify_error();
+  }
 }
 
 static void on_incoming_message(const String &msg) {
   if (msg.length() == 0) {
     return;
   }
+
+  class BusyScope {
+   public:
+    BusyScope() { status_led_set_busy(true); }
+    ~BusyScope() { status_led_set_busy(false); }
+  } busy_scope;
 
   Serial.print("[agent] incoming: ");
   Serial.println(msg);
@@ -128,12 +138,14 @@ void agent_loop_init() {
   persona_init();
   task_store_init();
   tool_registry_init();
+  status_led_init();
   scheduler_init();
   transport_telegram_init();
   Serial.println("[agent] init complete");
 }
 
 void agent_loop_tick() {
+  status_led_tick();
   transport_telegram_poll(on_incoming_message);
   scheduler_tick(on_incoming_message);
 }
