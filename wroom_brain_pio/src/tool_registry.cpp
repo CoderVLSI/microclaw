@@ -694,11 +694,18 @@ static bool extract_web_files_topic_from_text(const String &input, String &topic
   const bool has_js = (lc.indexOf("js") >= 0) || (lc.indexOf("javascript") >= 0);
   const bool has_site_words = (lc.indexOf("website") >= 0) || (lc.indexOf("web site") >= 0) ||
                               (lc.indexOf("landing page") >= 0) || (lc.indexOf("saas") >= 0);
+  const bool has_style_words =
+      (lc.indexOf("stunning") >= 0) || (lc.indexOf("modern") >= 0) ||
+      (lc.indexOf("premium") >= 0) || (lc.indexOf("beautiful") >= 0) ||
+      (lc.indexOf("polish") >= 0) || (lc.indexOf("revamp") >= 0) ||
+      (lc.indexOf("better") >= 0) || (lc.indexOf("improve") >= 0) ||
+      (lc.indexOf("redesign") >= 0) || (lc.indexOf("attractive") >= 0);
   const bool asks_file_delivery =
       (lc.indexOf(" file") >= 0) || (lc.indexOf(" files") >= 0) || (lc.indexOf(" send") >= 0);
   const bool wants_web_files =
-      (has_html && (has_css || has_js || has_site_words || asks_file_delivery)) ||
-      (has_site_words && asks_file_delivery);
+      (has_html && (has_css || has_js || has_site_words || asks_file_delivery || has_style_words)) ||
+      (has_site_words && (asks_file_delivery || has_style_words)) ||
+      (has_style_words && (has_site_words || has_html));
   if (!(asks_build && wants_web_files)) {
     return false;
   }
@@ -708,8 +715,14 @@ static bool extract_web_files_topic_from_text(const String &input, String &topic
   if (p >= 0) {
     topic = lc.substring(p + 5);
   }
-  if (topic.length() == 0 && lc.indexOf("saas") >= 0) {
-    topic = "saas website";
+  if (topic.length() == 0) {
+    if (lc.indexOf("saas") >= 0) {
+      topic = "saas website";
+    } else if (has_site_words && has_style_words) {
+      topic = "stunning website";
+    } else if (has_site_words) {
+      topic = "website";
+    }
   }
   topic.replace(" and send", "");
   topic.replace(" send", "");
@@ -717,6 +730,14 @@ static bool extract_web_files_topic_from_text(const String &input, String &topic
   topic.replace(" as files", "");
   topic.replace(" file", "");
   topic.replace(" files", "");
+  topic.replace(" more stunning", "");
+  topic.replace(" stunning", "");
+  topic.replace(" more modern", "");
+  topic.replace(" modern", "");
+  topic.replace(" improve", "");
+  topic.replace(" improved", "");
+  topic.replace(" redesign", "");
+  topic.replace(" website", "");
   topic = compact_spaces(topic);
   topic = sanitize_web_topic(topic);
   topic_out = topic;
@@ -728,7 +749,7 @@ static void build_small_web_files(const String &topic, String &html_out, String 
   String t = topic;
   t.trim();
   if (t.length() == 0) {
-    t = "mini demo";
+    t = "saas website";
   }
 
   html_out =
@@ -737,39 +758,104 @@ static void build_small_web_files(const String &topic, String &html_out, String 
       "<head>\n"
       "  <meta charset=\"utf-8\" />\n"
       "  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />\n"
-      "  <title>" +
-      t +
-      "</title>\n"
+      "  <title>" + t + " | AI SaaS</title>\n"
       "  <link rel=\"stylesheet\" href=\"styles.css\" />\n"
       "</head>\n"
       "<body>\n"
-      "  <main class=\"card\">\n"
-      "    <h1>" +
-      t +
-      "</h1>\n"
-      "    <p>Generated on ESP32 bot.</p>\n"
-      "    <button id=\"btn\">Click me</button>\n"
-      "    <p id=\"out\"></p>\n"
+      "  <div class=\"bg-orb orb-a\"></div>\n"
+      "  <div class=\"bg-orb orb-b\"></div>\n"
+      "  <header class=\"nav\">\n"
+      "    <div class=\"brand\">clawflow</div>\n"
+      "    <a class=\"nav-cta\" href=\"#pricing\">Start Free</a>\n"
+      "  </header>\n"
+      "  <main class=\"hero reveal\">\n"
+      "    <p class=\"eyebrow\">Launch faster with automation</p>\n"
+      "    <h1>" + t + " that ships outcomes, not busywork.</h1>\n"
+      "    <p class=\"sub\">Automate repetitive ops, visualize growth, and keep teams aligned with a practical AI workflow stack.</p>\n"
+      "    <div class=\"actions\">\n"
+      "      <button id=\"demoBtn\" class=\"btn btn-primary\">Book Demo</button>\n"
+      "      <button id=\"tourBtn\" class=\"btn btn-ghost\">See Product Tour</button>\n"
+      "    </div>\n"
+      "    <p id=\"out\" class=\"out\"></p>\n"
       "  </main>\n"
+      "  <section class=\"features\">\n"
+      "    <article class=\"card reveal\"><h3>Automations</h3><p>Build no-code flows for onboarding, support, and reporting.</p></article>\n"
+      "    <article class=\"card reveal\"><h3>Live Insights</h3><p>Track pipeline health, churn risk, and key metrics in one place.</p></article>\n"
+      "    <article class=\"card reveal\"><h3>Team Velocity</h3><p>Turn requests into prioritized tasks with transparent ownership.</p></article>\n"
+      "  </section>\n"
+      "  <section class=\"pricing reveal\" id=\"pricing\">\n"
+      "    <h2>Simple pricing</h2>\n"
+      "    <p>$29/mo starter, $99/mo growth, enterprise with custom SLAs.</p>\n"
+      "  </section>\n"
       "  <script src=\"script.js\"></script>\n"
       "</body>\n"
       "</html>\n";
 
   css_out =
-      ":root { font-family: system-ui, sans-serif; }\n"
-      "body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0f172a; color: #e2e8f0; }\n"
-      ".card { width: min(92vw, 480px); padding: 24px; border-radius: 16px; background: #1e293b; box-shadow: 0 10px 30px rgba(0,0,0,.35); }\n"
-      "h1 { margin-top: 0; }\n"
-      "button { border: 0; padding: 10px 14px; border-radius: 10px; background: #38bdf8; color: #06283b; font-weight: 700; cursor: pointer; }\n"
-      "#out { margin-top: 12px; color: #7dd3fc; }\n";
+      "@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap');\n"
+      ":root {\n"
+      "  --bg-1: #081521;\n"
+      "  --bg-2: #10293a;\n"
+      "  --ink: #e9f2ff;\n"
+      "  --muted: #9bb4c9;\n"
+      "  --line: rgba(255,255,255,.14);\n"
+      "  --accent: #44f2b8;\n"
+      "  --accent-2: #ffb347;\n"
+      "}\n"
+      "* { box-sizing: border-box; }\n"
+      "html, body { margin: 0; }\n"
+      "body {\n"
+      "  min-height: 100vh;\n"
+      "  font-family: 'Space Grotesk', 'Segoe UI', sans-serif;\n"
+      "  color: var(--ink);\n"
+      "  background: radial-gradient(circle at 12% 20%, #11405f, transparent 34%),\n"
+      "              radial-gradient(circle at 90% 14%, #4b2b14, transparent 30%),\n"
+      "              linear-gradient(160deg, var(--bg-1), var(--bg-2));\n"
+      "  padding: 20px clamp(16px, 4vw, 40px) 40px;\n"
+      "}\n"
+      ".bg-orb { position: fixed; width: 260px; height: 260px; border-radius: 50%; filter: blur(42px); opacity: .28; z-index: -1; animation: drift 12s ease-in-out infinite; }\n"
+      ".orb-a { background: var(--accent); top: 8%; left: -40px; }\n"
+      ".orb-b { background: var(--accent-2); bottom: 4%; right: -40px; animation-delay: -4s; }\n"
+      ".nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; }\n"
+      ".brand { font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }\n"
+      ".nav-cta { color: #032b1f; text-decoration: none; background: var(--accent); padding: 10px 14px; border-radius: 10px; font-weight: 700; }\n"
+      ".hero { max-width: 860px; }\n"
+      ".eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: .09em; font-size: .78rem; }\n"
+      "h1 { margin: 8px 0 12px; font-size: clamp(1.9rem, 5.5vw, 3.7rem); line-height: 1.05; max-width: 18ch; }\n"
+      ".sub { color: var(--muted); max-width: 56ch; font-size: 1.03rem; }\n"
+      ".actions { margin-top: 18px; display: flex; gap: 12px; flex-wrap: wrap; }\n"
+      ".btn { border: 0; border-radius: 12px; padding: 11px 16px; font-weight: 700; cursor: pointer; transition: transform .2s ease, box-shadow .2s ease; }\n"
+      ".btn:hover { transform: translateY(-2px); box-shadow: 0 14px 28px rgba(0,0,0,.24); }\n"
+      ".btn-primary { background: linear-gradient(135deg, var(--accent), #8ffff0); color: #023026; }\n"
+      ".btn-ghost { background: rgba(255,255,255,.06); color: var(--ink); border: 1px solid var(--line); }\n"
+      ".out { min-height: 20px; margin-top: 12px; color: #b8fff0; }\n"
+      ".features { margin-top: 34px; display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }\n"
+      ".card { background: rgba(255,255,255,.05); border: 1px solid var(--line); border-radius: 16px; padding: 16px; backdrop-filter: blur(6px); }\n"
+      ".card h3 { margin: 0 0 6px; }\n"
+      ".card p { margin: 0; color: var(--muted); }\n"
+      ".pricing { margin-top: 26px; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: rgba(0,0,0,.18); }\n"
+      ".pricing h2 { margin: 0 0 8px; }\n"
+      ".pricing p { margin: 0; color: #d1e0ed; }\n"
+      ".reveal { opacity: 0; transform: translateY(12px); }\n"
+      ".reveal.is-on { opacity: 1; transform: translateY(0); transition: opacity .55s ease, transform .55s ease; }\n"
+      "@keyframes drift { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }\n"
+      "@media (max-width: 640px) { .nav { margin-bottom: 18px; } .actions { gap: 10px; } }\n";
 
   js_out =
-      "const btn = document.getElementById('btn');\n"
+      "const btn = document.getElementById('demoBtn');\n"
+      "const tourBtn = document.getElementById('tourBtn');\n"
       "const out = document.getElementById('out');\n"
-      "let n = 0;\n"
+      "const reveal = document.querySelectorAll('.reveal');\n"
+      "reveal.forEach((el, i) => {\n"
+      "  setTimeout(() => el.classList.add('is-on'), 120 + i * 120);\n"
+      "});\n"
+      "let demoCount = 0;\n"
       "btn.addEventListener('click', () => {\n"
-      "  n += 1;\n"
-      "  out.textContent = `Clicked ${n} time(s)`;\n"
+      "  demoCount += 1;\n"
+      "  out.textContent = 'Demo request queued (' + demoCount + ')';\n"
+      "});\n"
+      "tourBtn.addEventListener('click', () => {\n"
+      "  out.textContent = 'Product tour sent to your inbox.';\n"
       "});\n";
 }
 
