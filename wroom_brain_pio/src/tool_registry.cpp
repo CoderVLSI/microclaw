@@ -4,6 +4,7 @@
 #include <WiFi.h>
 
 #include "brain_config.h"
+#include "chat_history.h"
 #include "event_log.h"
 #include "llm_client.h"
 #include "memory_store.h"
@@ -157,6 +158,7 @@ void build_help_text(String &out) {
       "status\n"
       "help\n"
       "health\n"
+      "specs\n"
       "relay_set <pin> <0|1> (requires confirm)\n"
       "flash_led [1-20] (requires confirm)\n"
       "reminder_set_daily <HH:MM> <message>\n"
@@ -196,7 +198,7 @@ String wifi_health_line() {
 void tool_registry_init() {
   Serial.println(
       "[tools] allowlist: status, relay_set <pin> <0|1>, sensor_read <pin>, "
-      "flash_led [count], help, health, confirm, cancel, plan <task>, "
+      "flash_led [count], help, health, specs, confirm, cancel, plan <task>, "
       "reminder_set_daily/reminder_show/reminder_clear, timezone_show/timezone_set/timezone_clear, "
       "webjob_set_daily/webjob_show/webjob_run/webjob_clear, "
       "web_files_make, "
@@ -1290,6 +1292,97 @@ bool tool_registry_execute(const String &input, String &out) {
         out += "\nreminder_daily=none";
       }
     }
+    return true;
+  }
+
+  if (cmd_lc == "specs") {
+    // Chip and flash info
+    out = "=== ESP32 Specs ===\n\n";
+    out += "Chip: " + String(ESP.getChipModel()) + "\n";
+    out += "Cores: " + String(ESP.getChipCores()) + "\n";
+    out += "CPU Frequency: " + String(ESP.getCpuFreqMHz()) + " MHz\n";
+    out += "Flash Size: " + String(ESP.getFlashChipSize() / 1024) + " KB\n";
+    out += "Sketch Size: " + String(ESP.getSketchSize() / 1024) + " KB\n";
+    out += "Free Sketch Space: " + String(ESP.getFreeSketchSpace() / 1024) + " KB\n\n";
+
+    // RAM info
+    out += "=== RAM ===\n";
+    out += "Free Heap: " + String(ESP.getFreeHeap()) + " bytes\n";
+    out += "Largest Free Block: " + String(ESP.getMaxAllocHeap()) + " bytes\n";
+    out += "Total Heap: " + String(ESP.getHeapSize()) + " bytes\n\n";
+
+    // PSRAM info (if available)
+    if (psramFound()) {
+      out += "=== PSRAM ===\n";
+      out += "PSRAM Total: " + String(ESP.getPsramSize()) + " bytes\n";
+      out += "PSRAM Free: " + String(ESP.getFreePsram()) + " bytes\n\n";
+    } else {
+      out += "=== PSRAM: Not Available ===\n\n";
+    }
+
+    // NVS Storage breakdown
+    out += "=== NVS Storage (61KB partition) ===\n";
+    out += "Used / Limit:\n\n";
+
+    // Memory
+    String mem;
+    String mem_err;
+    if (memory_get_notes(mem, mem_err)) {
+      size_t used = mem.length();
+      size_t limit = MEMORY_MAX_CHARS;
+      int percent = (used * 100) / limit;
+      out += "memory: " + String(used) + " / " + String(limit) + " chars (" + String(percent) + "%)\n";
+    } else {
+      out += "memory: Error\n";
+    }
+
+    // Chat history
+    String chat;
+    String chat_err;
+    if (chat_history_get(chat, chat_err)) {
+      size_t used = chat.length();
+      size_t lines = 0;
+      for (size_t i = 0; i < chat.length(); i++) {
+        if (chat[i] == '\n') lines++;
+      }
+      out += "chat_history: " + String(lines) + " lines, " + String(used) + " chars\n";
+    } else {
+      out += "chat_history: " + String(chat_err) + "\n";
+    }
+
+    // Persona (soul + heartbeat)
+    String soul, heartbeat, persona_err;
+    size_t persona_used = 0;
+    if (persona_get_soul(soul, persona_err)) {
+      persona_used += soul.length();
+    }
+    if (persona_get_heartbeat(heartbeat, persona_err)) {
+      persona_used += heartbeat.length();
+    }
+    out += "persona: " + String(persona_used) + " chars used\n";
+
+    // Tasks
+    String tasks, tasks_err;
+    if (task_list(tasks, tasks_err)) {
+      size_t used = tasks.length();
+      size_t limit = TASKS_MAX_CHARS;
+      int percent = (used * 100) / limit;
+      out += "tasks: " + String(used) + " / " + String(limit) + " chars (" + String(percent) + "%)\n";
+    } else {
+      out += "tasks: " + tasks_err + "\n";
+    }
+
+    // Model config
+    String active_provider = model_config_get_active_provider();
+    out += "\n=== LLM Config ===\n";
+    out += "Active Provider: " + (active_provider.length() > 0 ? active_provider : "(none)") + "\n";
+    out += "Configured: " + model_config_get_configured_list() + "\n";
+
+    // WiFi
+    out += "\n=== WiFi ===\n";
+    out += wifi_health_line() + "\n";
+    out += "RSSI: " + String(WiFi.RSSI()) + " dBm\n";
+
     return true;
   }
 
