@@ -8,7 +8,7 @@
 #include "brain_config.h"
 
 static unsigned long s_last_poll_ms = 0;
-static long s_last_update_id = 0;
+static long long s_last_update_id = 0;
 
 static String s_last_chat_id = TELEGRAM_ALLOWED_CHAT_ID;
 
@@ -85,7 +85,7 @@ static int https_post_raw(const String &url, const String &content_type, const S
   return code;
 }
 
-static bool extract_int_after_key(const String &body, const char *key, long *value_out) {
+static bool extract_int64_after_key(const String &body, const char *key, long long *value_out) {
   const int k = body.indexOf(key);
   if (k < 0) {
     return false;
@@ -102,7 +102,7 @@ static bool extract_int_after_key(const String &body, const char *key, long *val
     i++;
   }
 
-  long v = 0;
+  long long v = 0;
   bool any = false;
   while (i < (int)body.length() && body[i] >= '0' && body[i] <= '9') {
     any = true;
@@ -115,6 +115,39 @@ static bool extract_int_after_key(const String &body, const char *key, long *val
   }
 
   *value_out = neg ? -v : v;
+  return true;
+}
+
+static bool extract_number_string_after_key(const String &body, const char *key, String &value_out) {
+  const int k = body.indexOf(key);
+  if (k < 0) {
+    return false;
+  }
+
+  int i = k + (int)strlen(key);
+  while (i < (int)body.length() && (body[i] == ' ' || body[i] == ':')) {
+    i++;
+  }
+  if (i >= (int)body.length()) {
+    return false;
+  }
+
+  const int start = i;
+  if (body[i] == '-') {
+    i++;
+  }
+
+  bool any = false;
+  while (i < (int)body.length() && body[i] >= '0' && body[i] <= '9') {
+    any = true;
+    i++;
+  }
+
+  if (!any) {
+    return false;
+  }
+
+  value_out = body.substring(start, i);
   return true;
 }
 
@@ -157,15 +190,13 @@ static bool extract_text_field(const String &body, String &text_out) {
 }
 
 static bool extract_chat_id(const String &body, String &chat_id_out) {
-  long id = 0;
-  if (!extract_int_after_key(body, "\"chat\":{\"id\"", &id)) {
-    if (!extract_int_after_key(body, "\"chat\": {\"id\"", &id)) {
-      if (!extract_int_after_key(body, "\"chat\":{ \"id\"", &id)) {
+  if (!extract_number_string_after_key(body, "\"chat\":{\"id\"", chat_id_out)) {
+    if (!extract_number_string_after_key(body, "\"chat\": {\"id\"", chat_id_out)) {
+      if (!extract_number_string_after_key(body, "\"chat\":{ \"id\"", chat_id_out)) {
         return false;
       }
     }
   }
-  chat_id_out = String(id);
   return true;
 }
 
@@ -296,8 +327,8 @@ void transport_telegram_poll(incoming_cb_t cb) {
     return;
   }
 
-  long update_id = 0;
-  if (!extract_int_after_key(body, "\"update_id\"", &update_id)) {
+  long long update_id = 0;
+  if (!extract_int64_after_key(body, "\"update_id\"", &update_id)) {
     return;
   }
   if (update_id <= s_last_update_id) {
