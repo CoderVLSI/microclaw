@@ -1027,7 +1027,7 @@ static bool is_pdf_summary_request(const String &cmd_lc) {
       "review this",
   };
   return text_has_any(cmd_lc, doc_terms, sizeof(doc_terms) / sizeof(doc_terms[0])) &&
-         text_has_any(summary_terms, summary_terms, sizeof(summary_terms) / sizeof(summary_terms[0]));
+         text_has_any(cmd_lc, summary_terms, sizeof(summary_terms) / sizeof(summary_terms[0]));
 }
 
 static bool is_image_understanding_request(const String &cmd_lc) {
@@ -1051,7 +1051,7 @@ static bool is_image_understanding_request(const String &cmd_lc) {
       "summar",
   };
   return text_has_any(cmd_lc, image_terms, sizeof(image_terms) / sizeof(image_terms[0])) &&
-         text_has_any(understand_terms, understand_terms,
+         text_has_any(cmd_lc, understand_terms,
                       sizeof(understand_terms) / sizeof(understand_terms[0]));
 }
 
