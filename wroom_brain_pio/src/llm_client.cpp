@@ -81,59 +81,85 @@ String json_escape(const String &src) {
   return out;
 }
 
-bool extract_json_string_after(const String &body, const char *needle, String &out) {
-  const int key = body.indexOf(needle);
-  if (key < 0) {
+static bool is_json_ws(const char c) {
+  return c == ' ' || c == '\n' || c == '\r' || c == '\t';
+}
+
+bool extract_json_string_field(const String &body, const char *field_name, String &out) {
+  const String key = String("\"") + field_name + "\"";
+  int search_from = 0;
+
+  while (true) {
+    const int key_pos = body.indexOf(key, search_from);
+    if (key_pos < 0) {
+      return false;
+    }
+
+    int i = key_pos + (int)key.length();
+    while (i < (int)body.length() && is_json_ws(body[i])) {
+      i++;
+    }
+    if (i >= (int)body.length() || body[i] != ':') {
+      search_from = key_pos + 1;
+      continue;
+    }
+
+    i++;
+    while (i < (int)body.length() && is_json_ws(body[i])) {
+      i++;
+    }
+    if (i >= (int)body.length() || body[i] != '"') {
+      search_from = key_pos + 1;
+      continue;
+    }
+    i++;
+
+    String text;
+    text.reserve(256);
+    bool esc = false;
+    for (; i < (int)body.length(); i++) {
+      const char c = body[i];
+
+      if (esc) {
+        switch (c) {
+          case 'n':
+            text += '\n';
+            break;
+          case 'r':
+            text += '\r';
+            break;
+          case 't':
+            text += '\t';
+            break;
+          case '\\':
+            text += '\\';
+            break;
+          case '"':
+            text += '"';
+            break;
+          default:
+            text += c;
+            break;
+        }
+        esc = false;
+        continue;
+      }
+
+      if (c == '\\') {
+        esc = true;
+        continue;
+      }
+
+      if (c == '"') {
+        out = text;
+        return true;
+      }
+
+      text += c;
+    }
+
     return false;
   }
-
-  const int start = key + (int)strlen(needle);
-  String text;
-  text.reserve(256);
-  bool esc = false;
-
-  for (int i = start; i < (int)body.length(); i++) {
-    const char c = body[i];
-
-    if (esc) {
-      switch (c) {
-        case 'n':
-          text += '\n';
-          break;
-        case 'r':
-          text += '\r';
-          break;
-        case 't':
-          text += '\t';
-          break;
-        case '\\':
-          text += '\\';
-          break;
-        case '"':
-          text += '"';
-          break;
-        default:
-          text += c;
-          break;
-      }
-      esc = false;
-      continue;
-    }
-
-    if (c == '\\') {
-      esc = true;
-      continue;
-    }
-
-    if (c == '"') {
-      out = text;
-      return true;
-    }
-
-    text += c;
-  }
-
-  return false;
 }
 
 HttpResult http_post_json(const String &url, const String &body,
@@ -183,18 +209,18 @@ HttpResult http_post_json(const String &url, const String &body,
 }
 
 bool parse_response_text(const String &body, String &text) {
+  // OpenAI responses API compatibility fallback
+  if (extract_json_string_field(body, "output_text", text)) {
+    return true;
+  }
+
   // OpenAI/GLM chat-completions style
-  if (extract_json_string_after(body, "\"content\":\"", text)) {
+  if (extract_json_string_field(body, "content", text)) {
     return true;
   }
 
   // Anthropic and Gemini both include "text" fields
-  if (extract_json_string_after(body, "\"text\":\"", text)) {
-    return true;
-  }
-
-  // OpenAI responses API compatibility fallback
-  if (extract_json_string_after(body, "\"output_text\":\"", text)) {
+  if (extract_json_string_field(body, "text", text)) {
     return true;
   }
 
@@ -241,7 +267,7 @@ bool call_anthropic(const String &base_url, const String &api_key, const String 
     return false;
   }
 
-  if (!extract_json_string_after(res.body, "\"text\":\"", response_out)) {
+  if (!parse_response_text(res.body, response_out)) {
     error_out = "Could not parse provider response";
     return false;
   }
@@ -264,7 +290,7 @@ bool call_gemini(const String &base_url, const String &api_key, const String &mo
     return false;
   }
 
-  if (!extract_json_string_after(res.body, "\"text\":\"", response_out)) {
+  if (!parse_response_text(res.body, response_out)) {
     error_out = "Could not parse provider response";
     return false;
   }
@@ -528,7 +554,7 @@ bool llm_generate_image(const String &prompt, String &base64_out, String &error_
       return false;
     }
 
-    if (!extract_json_string_after(res.body, "\"bytesBase64Encoded\":\"", base64_out)) {
+    if (!extract_json_string_field(res.body, "bytesBase64Encoded", base64_out)) {
       error_out = "Could not parse Imagen response";
       return false;
     }
@@ -547,7 +573,7 @@ bool llm_generate_image(const String &prompt, String &base64_out, String &error_
       return false;
     }
 
-    if (!extract_json_string_after(res.body, "\"b64_json\":\"", base64_out)) {
+    if (!extract_json_string_field(res.body, "b64_json", base64_out)) {
       error_out = "Could not parse DALL-E response";
       return false;
     }
