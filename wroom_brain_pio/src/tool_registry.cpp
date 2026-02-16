@@ -690,10 +690,16 @@ static bool extract_web_files_topic_from_text(const String &input, String &topic
                           (lc.indexOf("gen ") >= 0);
   const bool has_html = (lc.indexOf("html") >= 0) || (lc.indexOf("htm l") >= 0) ||
                         (lc.indexOf("webpage") >= 0) || (lc.indexOf("web page") >= 0);
-  const bool has_web_words = has_html &&
-                             (lc.indexOf("css") >= 0 || lc.indexOf("style") >= 0) &&
-                             (lc.indexOf("js") >= 0 || lc.indexOf("javascript") >= 0);
-  if (!(asks_build && has_web_words)) {
+  const bool has_css = (lc.indexOf("css") >= 0) || (lc.indexOf("style") >= 0);
+  const bool has_js = (lc.indexOf("js") >= 0) || (lc.indexOf("javascript") >= 0);
+  const bool has_site_words = (lc.indexOf("website") >= 0) || (lc.indexOf("web site") >= 0) ||
+                              (lc.indexOf("landing page") >= 0) || (lc.indexOf("saas") >= 0);
+  const bool asks_file_delivery =
+      (lc.indexOf(" file") >= 0) || (lc.indexOf(" files") >= 0) || (lc.indexOf(" send") >= 0);
+  const bool wants_web_files =
+      (has_html && (has_css || has_js || has_site_words || asks_file_delivery)) ||
+      (has_site_words && asks_file_delivery);
+  if (!(asks_build && wants_web_files)) {
     return false;
   }
 
@@ -702,6 +708,16 @@ static bool extract_web_files_topic_from_text(const String &input, String &topic
   if (p >= 0) {
     topic = lc.substring(p + 5);
   }
+  if (topic.length() == 0 && lc.indexOf("saas") >= 0) {
+    topic = "saas website";
+  }
+  topic.replace(" and send", "");
+  topic.replace(" send", "");
+  topic.replace(" as file", "");
+  topic.replace(" as files", "");
+  topic.replace(" file", "");
+  topic.replace(" files", "");
+  topic = compact_spaces(topic);
   topic = sanitize_web_topic(topic);
   topic_out = topic;
   return true;
