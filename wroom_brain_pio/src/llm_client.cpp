@@ -695,3 +695,83 @@ bool llm_generate_image(const String &prompt, String &base64_out, String &error_
   error_out = "Image generation requires IMAGE_PROVIDER=gemini/openai (or LLM_PROVIDER fallback)";
   return false;
 }
+
+bool llm_understand_media(const String &instruction, const String &mime_type,
+                          const String &base64_data, String &reply_out, String &error_out) {
+  reply_out = "";
+
+  String provider = to_lower(String(LLM_PROVIDER));
+  String api_key = String(LLM_API_KEY);
+  if ((provider.length() == 0 || provider == "none") &&
+      to_lower(String(IMAGE_PROVIDER)) == "gemini") {
+    provider = "gemini";
+  }
+  if (api_key.length() == 0) {
+    api_key = String(IMAGE_API_KEY);
+  }
+
+  if (provider != "gemini") {
+    error_out = "Media understanding currently requires LLM_PROVIDER=gemini";
+    return false;
+  }
+  if (api_key.length() == 0) {
+    error_out = "Missing LLM_API_KEY";
+    return false;
+  }
+
+  String prompt = instruction;
+  prompt.trim();
+  if (prompt.length() == 0) {
+    prompt = "Analyze this file and return a concise summary.";
+  }
+
+  String media_mime = mime_type;
+  media_mime.trim();
+  if (media_mime.length() == 0) {
+    media_mime = "application/octet-stream";
+  }
+
+  if (base64_data.length() == 0) {
+    error_out = "Missing media data";
+    return false;
+  }
+  if (base64_data.length() > 260000) {
+    error_out = "Media payload too large for ESP32";
+    return false;
+  }
+
+  String model = String(LLM_MODEL);
+  model.trim();
+  String model_lc = model;
+  model_lc.toLowerCase();
+  if (model.length() == 0 || contains_ci(model_lc, "image-generation") ||
+      model_lc.endsWith("-image")) {
+    model = "gemini-2.0-flash";
+  }
+
+  const String url = join_url(String(LLM_GEMINI_BASE_URL),
+                              String("/v1beta/models/") + model + ":generateContent");
+  const String body =
+      String("{\"contents\":[{\"parts\":[{\"text\":\"") + json_escape(prompt) +
+      "\"},{\"inlineData\":{\"mimeType\":\"" + json_escape(media_mime) +
+      "\",\"data\":\"" + base64_data +
+      "\"}}]}],\"generationConfig\":{\"temperature\":0.2}}";
+
+  const HttpResult res = http_post_json(url, body, "x-goog-api-key", api_key);
+  if (res.status_code < 200 || res.status_code >= 300) {
+    error_out = summarize_http_error("Gemini media", res);
+    return false;
+  }
+
+  if (!parse_response_text(res.body, reply_out)) {
+    error_out = "Could not parse Gemini media response";
+    return false;
+  }
+
+  reply_out.trim();
+  if (reply_out.length() == 0) {
+    error_out = "Empty Gemini media response";
+    return false;
+  }
+  return true;
+}

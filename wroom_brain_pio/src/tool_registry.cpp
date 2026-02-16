@@ -1000,6 +1000,139 @@ static int parse_led_flash_count(const String &cmd_lc) {
   return 0;
 }
 
+static bool text_has_any(const String &text_lc, const char *const terms[], size_t term_count) {
+  for (size_t i = 0; i < term_count; i++) {
+    if (text_lc.indexOf(terms[i]) >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool is_pdf_summary_request(const String &cmd_lc) {
+  const char *doc_terms[] = {
+      "pdf",
+      "document",
+      "doc file",
+      "report",
+  };
+  const char *summary_terms[] = {
+      "summar",
+      "tldr",
+      "tl;dr",
+      "key points",
+      "highlights",
+      "gist",
+      "explain this",
+      "review this",
+  };
+  return text_has_any(cmd_lc, doc_terms, sizeof(doc_terms) / sizeof(doc_terms[0])) &&
+         text_has_any(summary_terms, summary_terms, sizeof(summary_terms) / sizeof(summary_terms[0]));
+}
+
+static bool is_image_understanding_request(const String &cmd_lc) {
+  const char *image_terms[] = {
+      "image",
+      "photo",
+      "picture",
+      "screenshot",
+      "diagram",
+  };
+  const char *understand_terms[] = {
+      "describe",
+      "what is",
+      "what's in",
+      "analy",
+      "explain",
+      "understand",
+      "ocr",
+      "extract text",
+      "read text",
+      "summar",
+  };
+  return text_has_any(cmd_lc, image_terms, sizeof(image_terms) / sizeof(image_terms[0])) &&
+         text_has_any(understand_terms, understand_terms,
+                      sizeof(understand_terms) / sizeof(understand_terms[0]));
+}
+
+static bool extract_natural_image_prompt(const String &cmd, String &prompt_out) {
+  String raw = cmd;
+  raw.trim();
+  String lc = raw;
+  lc.toLowerCase();
+
+  const char *prefixes[] = {
+      "generate_image ",
+      "generate image ",
+      "generate an image of ",
+      "generate a photo of ",
+      "create an image of ",
+      "create image of ",
+      "make an image of ",
+      "make a poster of ",
+      "make a logo of ",
+      "draw ",
+  };
+
+  for (size_t i = 0; i < (sizeof(prefixes) / sizeof(prefixes[0])); i++) {
+    String p = String(prefixes[i]);
+    if (lc.startsWith(p)) {
+      String prompt = raw.substring(p.length());
+      prompt.trim();
+      if (prompt.length() > 0) {
+        prompt_out = prompt;
+        return true;
+      }
+      return false;
+    }
+  }
+
+  const bool has_image_noun = (lc.indexOf("image") >= 0) || (lc.indexOf("photo") >= 0) ||
+                              (lc.indexOf("poster") >= 0) || (lc.indexOf("logo") >= 0);
+  const bool has_generation_verb = lc.startsWith("generate ") || lc.startsWith("create ") ||
+                                   lc.startsWith("make ") || lc.startsWith("draw ");
+
+  if (has_image_noun && has_generation_verb) {
+    prompt_out = raw;
+    return true;
+  }
+  return false;
+}
+
+static String build_media_instruction(const String &user_message, bool is_pdf_mode) {
+  String msg_lc = user_message;
+  msg_lc.toLowerCase();
+  if (is_pdf_mode) {
+    return String("Read this PDF and answer the user request clearly.\n"
+                  "Format with:\n"
+                  "TL;DR:\n"
+                  "Key Points:\n"
+                  "Action Items:\n"
+                  "Risks / Open Questions:\n"
+                  "If the document text is unreadable, say so clearly.\n"
+                  "User request: ") +
+           user_message;
+  }
+
+  if (msg_lc.indexOf("ocr") >= 0 || msg_lc.indexOf("extract text") >= 0 ||
+      msg_lc.indexOf("read text") >= 0) {
+    return String("Perform OCR on this image. Return:\n"
+                  "1) Exact extracted text\n"
+                  "2) Cleaned summary in 3 bullets\n"
+                  "3) Any uncertain words/regions.\n"
+                  "User request: ") +
+           user_message;
+  }
+
+  return String("Analyze this image and answer the user request.\n"
+                "Return concise output with:\n"
+                "Scene summary\n"
+                "Visible text (if any)\n"
+                "Actionable takeaways.\n"
+                "User request: ") +
+         user_message;
+}
+
 static String normalize_command(const String &input) {
   String cmd = input;
   cmd.trim();
@@ -2065,6 +2198,40 @@ bool tool_registry_execute(const String &input, String &out) {
 
     out = "Image generated and sent";
     return true;
+  }
+
+  if (cmd_lc.indexOf("summarize") >= 0 || cmd_lc.indexOf("analyse") >= 0 ||
+      cmd_lc.indexOf("analyze") >= 0 || cmd_lc.indexOf("describe") >= 0 ||
+      cmd_lc.indexOf("explain") >= 0 || cmd_lc.indexOf("read this") >= 0 ||
+      cmd_lc.startsWith("what is in") || cmd_lc.startsWith("what's in")) {
+    
+    // Check for document first (PDFs etc)
+    String doc_name, doc_mime, doc_b64, doc_err;
+    if (transport_telegram_get_last_document_base64(doc_name, doc_mime, doc_b64, doc_err)) {
+      String reply, llm_err;
+      out = "Analyzing document: " + doc_name + "...";
+      if (llm_understand_media(cmd, doc_mime, doc_b64, reply, llm_err)) {
+        out = "Document Analysis (" + doc_name + "):\n" + reply;
+        return true;
+      }
+      out = "ERR: " + llm_err;
+      return true;
+    }
+
+    // Check for photo second
+    String photo_mime, photo_b64, photo_err;
+    if (transport_telegram_get_last_photo_base64(photo_mime, photo_b64, photo_err)) {
+      String reply, llm_err;
+      out = "Analyzing photo...";
+      if (llm_understand_media(cmd, photo_mime, photo_b64, reply, llm_err)) {
+        out = "Photo Analysis:\n" + reply;
+        return true;
+      }
+      out = "ERR: " + llm_err;
+      return true;
+    }
+    
+    // Fall through if no media found (might be normal text chat)
   }
 
   return false;
