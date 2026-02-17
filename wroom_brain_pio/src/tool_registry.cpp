@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <HTTPUpdate.h>
+#include <HTTPClient.h>
 
 #include "agent_loop.h"
 #include "brain_config.h"
@@ -19,10 +21,21 @@
 
 namespace {
 
+// Pending firmware update info
+struct PendingUpdate {
+  bool available;
+  String version;
+  String download_url;
+  unsigned long notified_ms;  // When we notified the user
+};
+
+PendingUpdate s_pending_update{false, "", "", 0};
+
 enum PendingActionType {
   PENDING_NONE = 0,
   PENDING_RELAY_SET = 1,
   PENDING_LED_FLASH = 2,
+  PENDING_FIRMWARE_UPDATE = 3,  // New type for firmware update
 };
 
 struct PendingAction {
@@ -161,6 +174,8 @@ void build_help_text(String &out) {
       "help\n"
       "health\n"
       "specs\n"
+      "security\n"
+      "update [url]\n"
       "relay_set <pin> <0|1> (requires confirm)\n"
       "flash_led [1-20] (requires confirm)\n"
       "reminder_set_daily <HH:MM> <message>\n"
@@ -203,12 +218,18 @@ static bool looks_like_email_request(const String &text_lc) {
           (text_lc.indexOf("to") >= 0 || text_lc.indexOf("@") >= 0);
 }
 
+static bool looks_like_update_request(const String &text_lc) {
+  return (text_lc.indexOf("update") >= 0 || text_lc.indexOf("upgrade") >= 0 ||
+          text_lc.indexOf("firmware") >= 0 || text_lc.indexOf("flash") >= 0 ||
+          text_lc.indexOf("new version") >= 0);
+}
+
 }  // namespace
 
 void tool_registry_init() {
   Serial.println(
       "[tools] allowlist: status, relay_set <pin> <0|1>, sensor_read <pin>, "
-      "flash_led [count], help, health, specs, confirm, cancel, plan <task>, "
+      "flash_led [count], help, health, specs, security, update [url], confirm, cancel, plan <task>, "
       "reminder_set_daily/reminder_show/reminder_clear, timezone_show/timezone_set/timezone_clear, "
       "webjob_set_daily/webjob_show/webjob_run/webjob_clear, "
       "web_files_make, "
@@ -1178,6 +1199,116 @@ static String normalize_command(const String &input) {
   return cmd;
 }
 
+// Check GitHub for updates and notify user if available
+void tool_registry_check_updates_async() {
+  String github_repo = GITHUB_REPO;
+  if (github_repo.length() == 0) {
+    github_repo = "timiclaw/timiclaw";  // Default
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+
+  String api_url = "https://api.github.com/repos/" + github_repo + "/releases/latest";
+  Serial.println("[update] Checking for updates: " + api_url);
+
+  if (http.begin(client, api_url)) {
+    int http_code = http.GET();
+
+    if (http_code == 200) {
+      String payload = http.getString();
+
+      // Parse JSON to find version and download URL
+      int tag_idx = payload.indexOf("\"tag_name\":");
+      int assets_idx = payload.indexOf("\"assets\":");
+      int name_idx = payload.indexOf("\"name\":\"firmware.bin\"", assets_idx);
+      int url_idx = payload.indexOf("\"browser_download_url\":", name_idx);
+
+      if (tag_idx > 0 && assets_idx > 0 && name_idx > 0 && url_idx > 0) {
+        // Extract version tag
+        int tag_start = payload.indexOf("\"", tag_idx + 11) + 1;
+        int tag_end = payload.indexOf("\"", tag_start);
+        String version = payload.substring(tag_start, tag_end);
+
+        // Extract download URL
+        int url_start = payload.indexOf("\"", url_idx + 23) + 1;
+        int url_end = payload.indexOf("\"", url_start);
+        String download_url = payload.substring(url_start, url_end);
+
+        // Store pending update
+        s_pending_update.available = true;
+        s_pending_update.version = version;
+        s_pending_update.download_url = download_url;
+        s_pending_update.notified_ms = millis();
+
+        // Send notification to user
+        String notification = "🔄 **New Firmware Available!**\n\n";
+        notification += "Latest version: " + version + "\n";
+        notification += "Reply **yes** to update now\n";
+        notification += "(ESP32 will restart after update)";
+
+        transport_telegram_send(notification);
+        Serial.println("[update] New version available: " + version);
+      } else {
+        Serial.println("[update] No firmware.bin found in release");
+      }
+    } else {
+      Serial.println("[update] GitHub API HTTP " + String(http_code));
+    }
+    http.end();
+  } else {
+    Serial.println("[update] Could not connect to GitHub API");
+  }
+}
+
+// Trigger the pending firmware update
+bool tool_registry_trigger_update(String &out) {
+  if (!s_pending_update.available) {
+    out = "No pending update available";
+    return false;
+  }
+
+  // Check if notification is still recent (5 minutes)
+  if (is_expired(s_pending_update.notified_ms + 300000UL)) {
+    s_pending_update.available = false;
+    out = "Update offer expired. Say 'update' again to check.";
+    return false;
+  }
+
+  out = "=== Updating Firmware ===\n\n";
+  out += "Version: " + s_pending_update.version + "\n";
+  out += "Downloading and flashing...\n";
+  out += "(ESP32 will restart after update)\n";
+
+  Serial.println("[update] Starting update to " + s_pending_update.version);
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  t_httpUpdate_return ret = httpUpdate.update(client, s_pending_update.download_url);
+
+  switch (ret) {
+    case HTTP_UPDATE_FAILED:
+      Serial.println("[update] Failed: " + String(httpUpdate.getLastError()));
+      out = "ERR: Update failed\n" + httpUpdate.getLastErrorString();
+      s_pending_update.available = false;
+      break;
+    case HTTP_UPDATE_NO_UPDATES:
+      Serial.println("[update] No updates available");
+      out = "ERR: No updates available";
+      s_pending_update.available = false;
+      break;
+    case HTTP_UPDATE_OK:
+      Serial.println("[update] Success! Restarting...");
+      out = "OK: Updated to " + s_pending_update.version + "! Restarting...";
+      s_pending_update.available = false;
+      break;
+  }
+
+  return true;
+}
+
 bool tool_registry_execute(const String &input, String &out) {
   String cmd = normalize_command(input);
   cmd.trim();
@@ -1416,6 +1547,245 @@ bool tool_registry_execute(const String &input, String &out) {
     out += "\n=== WiFi ===\n";
     out += wifi_health_line() + "\n";
     out += "RSSI: " + String(WiFi.RSSI()) + " dBm\n";
+
+    return true;
+  }
+
+  if (cmd_lc == "security") {
+    out = "=== Security Status ===\n\n";
+
+    // Allowed Chat ID
+    out += "Allowed Chat ID: " + String(TELEGRAM_ALLOWED_CHAT_ID) + "\n";
+
+    // Safe Mode
+    out += "Safe Mode: " + String(is_safe_mode_enabled() ? "ON (risky actions blocked)" : "OFF (risky actions allowed)") + "\n";
+
+    // WiFi Security
+    out += "\n=== WiFi ===\n";
+    out += "Connected: " + String(WiFi.isConnected() ? "Yes" : "No") + "\n";
+    if (WiFi.isConnected()) {
+      out += "SSID: " + WiFi.SSID() + "\n";
+      out += "RSSI: " + String(WiFi.RSSI()) + " dBm\n";
+      out += "IP: " + WiFi.localIP().toString() + "\n";
+    }
+
+    // TLS Status (we use insecure TLS - setInsecure)
+    out += "\n=== TLS ===\n";
+    out += "Mode: INSECURE (setInsecure)\n";
+    out += "Note: For production, use certificate pinning\n";
+
+    // Firmware integrity
+    out += "\n=== Firmware ===\n";
+    out += "Sketch Size: " + String(ESP.getSketchSize() / 1024) + " KB\n";
+    out += "Free Sketch Space: " + String(ESP.getFreeSketchSpace() / 1024) + " KB\n";
+    out += "Flash Chip Size: " + String(ESP.getFlashChipSize() / (1024 * 1024)) + " MB\n";
+    out += "CPU: " + String(ESP.getChipModel()) + " @ " + String(ESP.getCpuFreqMHz()) + " MHz\n";
+
+    // Recent activity hint
+    out += "\n=== Recommendations ===\n";
+    if (!is_safe_mode_enabled()) {
+      out += "⚠️ Enable safe_mode to block risky GPIO actions\n";
+    }
+    out += "✅ Chat ID restriction active\n";
+    out += "⚠️ Consider using HTTPS/TLS certificates for production\n";
+
+    return true;
+  }
+
+  // Natural language update request handling
+  if (looks_like_update_request(cmd_lc) && !cmd_lc.startsWith("update ")) {
+    String url;
+    bool should_update;
+    bool check_github = false;
+    String llm_err;
+    if (llm_parse_update_request(cmd, url, should_update, check_github, llm_err)) {
+      if (should_update) {
+        // If check_github is true, fetch from GitHub releases
+        if (check_github) {
+          out = "=== Checking GitHub Releases ===\n\n";
+
+          // Get GitHub repo from env (default to timiclaw project)
+          String github_repo = GITHUB_REPO;
+          if (github_repo.length() == 0) {
+            github_repo = "timiclaw/timiclaw";  // Default
+          }
+
+          out += "Repo: " + github_repo + "\n";
+          out += "Fetching latest release...\n";
+
+          // Fetch latest release from GitHub API
+          WiFiClientSecure client;
+          client.setInsecure();
+          HTTPClient http;
+
+          String api_url = "https://api.github.com/repos/" + github_repo + "/releases/latest";
+          Serial.println("[update] Fetching: " + api_url);
+
+          if (http.begin(client, api_url)) {
+            int http_code = http.GET();
+
+            if (http_code == 200) {
+              String payload = http.getString();
+
+              // Parse JSON to find the firmware.bin download URL
+              // GitHub API returns: {"tag_name":"v1.0","assets":[{"name":"firmware.bin","browser_download_url":"..."}]}
+              int tag_idx = payload.indexOf("\"tag_name\":");
+              int assets_idx = payload.indexOf("\"assets\":");
+              int name_idx = payload.indexOf("\"name\":\"firmware.bin\"", assets_idx);
+              int url_idx = payload.indexOf("\"browser_download_url\":", name_idx);
+
+              if (tag_idx > 0 && assets_idx > 0 && name_idx > 0 && url_idx > 0) {
+                // Extract version tag
+                int tag_start = payload.indexOf("\"", tag_idx + 11) + 1;
+                int tag_end = payload.indexOf("\"", tag_start);
+                String version = payload.substring(tag_start, tag_end);
+
+                // Extract download URL
+                int url_start = payload.indexOf("\"", url_idx + 23) + 1;
+                int url_end = payload.indexOf("\"", url_start);
+                String download_url = payload.substring(url_start, url_end);
+
+                out += "\nLatest Release: " + version + "\n";
+                out += "Download URL: " + download_url + "\n";
+                out += "\nStarting update...\n";
+
+                Serial.println("[update] Latest: " + version + " from " + download_url);
+
+                // Perform update
+                t_httpUpdate_return ret = httpUpdate.update(client, download_url);
+
+                switch (ret) {
+                  case HTTP_UPDATE_FAILED:
+                    Serial.println("[update] Failed: " + String(httpUpdate.getLastError()));
+                    out = "\nERR: Update failed\n" + httpUpdate.getLastErrorString();
+                    break;
+                  case HTTP_UPDATE_NO_UPDATES:
+                    Serial.println("[update] No updates available");
+                    out = "\nERR: No updates available";
+                    break;
+                  case HTTP_UPDATE_OK:
+                    Serial.println("[update] Success! Restarting...");
+                    out = "\nOK: Updated to " + version + "! Restarting...";
+                    break;
+                }
+                http.end();
+                return true;
+              } else {
+                out += "\nERR: No firmware.bin found in release assets\n";
+                out += "Please upload firmware.bin to GitHub Releases";
+                http.end();
+                return true;
+              }
+            } else {
+              out += "\nERR: GitHub API HTTP " + String(http_code) + "\n";
+              out += "Check that GITHUB_REPO is set correctly";
+              http.end();
+              return true;
+            }
+          } else {
+            out = "\nERR: Could not connect to GitHub API";
+            return true;
+          }
+        }
+        // If URL was provided, trigger update
+        else if (url.length() > 0) {
+          out = "=== Firmware Update ===\n\n";
+          out += "URL: " + url + "\n";
+          out += "Downloading and flashing...\n";
+          out += "(ESP32 will restart after update)\n";
+
+          Serial.println("[update] Starting update from: " + url);
+
+          WiFiClientSecure client;
+          client.setInsecure();
+
+          t_httpUpdate_return ret = httpUpdate.update(client, url);
+
+          switch (ret) {
+            case HTTP_UPDATE_FAILED:
+              Serial.println("[update] Failed: " + String(httpUpdate.getLastError()) + " - " + httpUpdate.getLastErrorString());
+              out = "ERR: Update failed\n" + httpUpdate.getLastErrorString();
+              break;
+            case HTTP_UPDATE_NO_UPDATES:
+              Serial.println("[update] No updates available");
+              out = "ERR: No updates available";
+              break;
+            case HTTP_UPDATE_OK:
+              Serial.println("[update] Success! Restarting...");
+              out = "OK: Update complete! Restarting...";
+              break;
+          }
+          return true;
+        } else {
+          // No URL provided, show update info (like plain /update command)
+          cmd = "update";  // Fall through to exact command handler
+        }
+      }
+    }
+    // If LLM parsing fails or doesn't detect update intent, fall through to normal command processing
+  }
+
+  // Update command - show firmware info or trigger OTA update from URL
+  if (cmd_lc == "update") {
+    out = "=== Firmware Update ===\n\n";
+    out += "Current Firmware:\n";
+    out += "Sketch Size: " + String(ESP.getSketchSize() / 1024) + " KB\n";
+    out += "Free Space: " + String(ESP.getFreeSketchSpace() / 1024) + " KB\n";
+    out += "Flash Chip: " + String(ESP.getFlashChipSize() / (1024 * 1024)) + " MB\n";
+    out += "CPU: " + String(ESP.getChipModel()) + " @ " + String(ESP.getCpuFreqMHz()) + " MHz\n";
+    out += "SDK Version: " + String(ESP.getSdkVersion()) + "\n";
+
+    // Check for URL parameter
+    int space_idx = cmd.indexOf(' ');
+    if (space_idx > 0) {
+      String url = cmd.substring(space_idx + 1);
+      url.trim();
+
+      if (url.length() > 0) {
+        out += "\n=== Starting Update ===\n";
+        out += "URL: " + url + "\n";
+        out += "Downloading and flashing...\n";
+        out += "(ESP32 will restart after update)\n";
+
+        // Send status message first
+        String status_msg = out;
+
+        // Perform the update (this will restart ESP32 on success)
+        Serial.println("[update] Starting update from: " + url);
+
+        WiFiClientSecure client;
+        client.setInsecure();  // For HTTPS URLs
+
+        t_httpUpdate_return ret = httpUpdate.update(client, url);
+
+        switch (ret) {
+          case HTTP_UPDATE_FAILED:
+            Serial.println("[update] Failed: " + String(httpUpdate.getLastError()) + " - " + httpUpdate.getLastErrorString());
+            out = status_msg + "\n\nERR: Update failed\n" + httpUpdate.getLastErrorString();
+            break;
+          case HTTP_UPDATE_NO_UPDATES:
+            Serial.println("[update] No updates available");
+            out = status_msg + "\n\nERR: No updates available";
+            break;
+          case HTTP_UPDATE_OK:
+            Serial.println("[update] Success! Restarting...");
+            out = status_msg + "\n\nOK: Update complete! Restarting...";
+            break;
+        }
+        return true;
+      }
+    }
+
+    // No URL provided, show instructions
+    out += "\n=== How to Update ===\n";
+    out += "\nOption 1: OTA from Computer\n";
+    out += "1. Build firmware: pio run\n";
+    out += "2. Flash via OTA: pio run -t upload --upload-port espota --upload-port " + WiFi.localIP().toString() + "\n";
+
+    out += "\nOption 2: Self-Update from URL\n";
+    out += "Usage: update <firmware_url>\n";
+    out += "Example: update https://github.com/user/timiclaw/releases/download/v1.0/firmware.bin\n";
+    out += "\nNote: For self-update, host your firmware.bin on GitHub Releases or a web server.";
 
     return true;
   }
@@ -2115,6 +2485,14 @@ bool tool_registry_execute(const String &input, String &out) {
     clear_pending_reminder_details();
     out = "OK: pending action canceled";
     return true;
+  }
+
+  // Handle "yes" as confirmation for firmware update
+  if (cmd_lc == "yes" || cmd_lc == "yep" || cmd_lc == "yeah") {
+    if (s_pending_update.available) {
+      return tool_registry_trigger_update(out);
+    }
+    // Fall through to confirm handler if no firmware update pending
   }
 
   if (cmd_lc == "confirm" || cmd_lc.startsWith("confirm ")) {

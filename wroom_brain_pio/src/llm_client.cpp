@@ -1033,3 +1033,147 @@ bool llm_parse_email_request(const String &message, String &to_out, String &subj
   return false;
 }
 
+bool llm_parse_update_request(const String &message, String &url_out, bool &should_update_out,
+                              bool &check_github_out, String &error_out) {
+  if (message.length() == 0) {
+    error_out = "Empty message";
+    return false;
+  }
+
+  const String provider = to_lower(String(LLM_PROVIDER));
+  const String api_key = String(LLM_API_KEY);
+
+  if (api_key.length() == 0) {
+    error_out = "Missing LLM_API_KEY";
+    return false;
+  }
+
+  String url;
+  String headers;
+  String body;
+
+  // Build request based on provider
+  if (provider == "glm" || provider == "zhipu" || provider == "openai") {
+    // GLM and OpenAI-compatible format
+    url = join_url(String(LLM_GLM_BASE_URL), "/chat/completions");
+
+    const String system_prompt =
+        "Parse the user's message about firmware update. "
+        "Return ONLY in this exact JSON format (no markdown, no extra text):\n"
+        "{\"url\":\"https://...\",\"should_update\":true,\"check_github\":false}\n\n"
+        "Rules:\n"
+        "- url: the firmware URL if provided, otherwise empty string \"\"\n"
+        "- should_update: true if user wants to update/check for updates, false otherwise\n"
+        "- check_github: true if user says 'latest', 'newest', or wants GitHub release, false otherwise\n"
+        "- If user just asks about update status, set should_update=true but url=\"\" and check_github=false\n"
+        "- If user wants latest release from GitHub, set check_github=true and url=\"\"\n"
+        "- Return ONLY valid JSON, nothing else";
+
+    const String json_body =
+        String("{\"model\":\"") + String(LLM_MODEL) +
+        "\",\"messages\":[{\"role\":\"system\",\"content\":\"" + json_escape(system_prompt) +
+        "\"},{\"role\":\"user\",\"content\":\"" + json_escape(message) + "\"}]}";
+
+    const HttpResult res = http_post_json(url, json_body, "Authorization", "Bearer " + api_key);
+
+    if (res.status_code < 200 || res.status_code >= 300) {
+      error_out = "LLM HTTP " + String(res.status_code);
+      return false;
+    }
+
+    String response;
+    if (!parse_response_text(res.body, response)) {
+      error_out = "Could not parse LLM response";
+      return false;
+    }
+
+    // Parse JSON response
+    String json_str = response;
+    url_out = extract_json_value(json_str, "url");
+
+    String should_update_str = extract_json_value(json_str, "should_update");
+    should_update_out = (should_update_str == "true" || should_update_str == "1");
+
+    String check_github_str = extract_json_value(json_str, "check_github");
+    check_github_out = (check_github_str == "true" || check_github_str == "1");
+
+    return true;
+  }
+
+  if (provider == "gemini" || provider == "anthropic") {
+    // Gemini and Anthropic format
+    if (provider == "gemini") {
+      url = String("https://generativelanguage.googleapis.com/v1beta/models/") +
+             String(LLM_MODEL) + ":generateContent?key=" + api_key;
+    } else {
+      url = join_url(String(LLM_ANTHROPIC_BASE_URL), "/v1/messages");
+    }
+
+    const String prompt =
+        "Parse this update request: \"" + message + "\"\n"
+        "Return ONLY this JSON format: {\"url\":\"https://...\",\"should_update\":true,\"check_github\":false}\n"
+        "url: firmware URL or empty, should_update: true/false, check_github: true if user wants latest from GitHub";
+
+    if (provider == "gemini") {
+      const String json_body =
+          String("{\"contents\":[{\"parts\":[{\"text\":\"" + json_escape(prompt) + "\"}]}]}");
+      const HttpResult res = http_post_json(url, json_body);
+
+      if (res.status_code < 200 || res.status_code >= 300) {
+        error_out = "Gemini HTTP " + String(res.status_code);
+        return false;
+      }
+
+      String response;
+      if (!parse_response_text(res.body, response)) {
+        error_out = "Could not parse Gemini response";
+        return false;
+      }
+
+      String json_str = response;
+      url_out = extract_json_value(json_str, "url");
+
+      String should_update_str = extract_json_value(json_str, "should_update");
+      should_update_out = (should_update_str == "true" || should_update_str == "1");
+
+      String check_github_str = extract_json_value(json_str, "check_github");
+      check_github_out = (check_github_str == "true" || check_github_str == "1");
+
+      return true;
+    }
+
+    // Anthropic
+    const String json_body =
+        String("{\"model\":\"claude-3-haiku-20240307\",\"max_tokens\":1024,") +
+        "\"messages\":[{\"role\":\"user\",\"content\":\"" + json_escape(prompt) + "\"}]}";
+
+    const HttpResult res = http_post_json(url, json_body, "x-api-key",
+                                           "sk-ant-" + api_key);
+
+    if (res.status_code < 200 || res.status_code >= 300) {
+      error_out = "Anthropic HTTP " + String(res.status_code);
+      return false;
+    }
+
+    String response;
+    if (!parse_response_text(res.body, response)) {
+      error_out = "Could not parse Anthropic response";
+      return false;
+    }
+
+    String json_str = response;
+    url_out = extract_json_value(json_str, "url");
+
+    String should_update_str = extract_json_value(json_str, "should_update");
+    should_update_out = (should_update_str == "true" || should_update_str == "1");
+
+    String check_github_str = extract_json_value(json_str, "check_github");
+    check_github_out = (check_github_str == "true" || check_github_str == "1");
+
+    return true;
+  }
+
+  error_out = "Update parsing not supported for provider: " + provider;
+  return false;
+}
+

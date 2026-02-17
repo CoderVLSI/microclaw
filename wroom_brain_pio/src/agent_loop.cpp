@@ -158,6 +158,14 @@ void agent_loop_init() {
   scheduler_init();
   transport_telegram_init();
   Serial.println("[agent] init complete");
+
+  // Check for firmware updates after 30 seconds (gives WiFi time to stabilize)
+  // Only check if GITHUB_REPO is configured
+  #ifdef GITHUB_REPO
+    delay(30000);
+    Serial.println("[agent] checking for firmware updates...");
+    tool_registry_check_updates_async();
+  #endif
 }
 
 void agent_loop_tick() {

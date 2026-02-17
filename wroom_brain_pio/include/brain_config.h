@@ -184,4 +184,9 @@
 #define WEB_JOB_TIMEOUT_MS 20000
 #endif
 
+// GitHub repo for auto-updates (format: username/repo)
+#ifndef GITHUB_REPO
+#define GITHUB_REPO ""
+#endif
+
 #endif

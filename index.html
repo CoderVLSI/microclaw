@@ -150,7 +150,7 @@
         }
 
         .hero-content {
-            max-width: 650px;
+            max-width: 550px;
             z-index: 1;
         }
 
@@ -387,6 +387,44 @@
                 justify-content: center;
             }
         }
+
+        /* Code Comparison Styles */
+        .code-box {
+            background: #111;
+            padding: 1.5rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            line-height: 1.6;
+            color: #d4d4d4;
+        }
+
+        .lang-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            letter-spacing: 0.05em;
+        }
+
+        .cpp-str {
+            color: #ce9178;
+        }
+
+        .kwd {
+            color: #569cd6;
+        }
+
+        .fn {
+            color: #dcdcaa;
+        }
+
+        .cmt {
+            color: #6a9955;
+        }
     </style>
 </head>
 
@@ -394,11 +432,10 @@
 
     <nav>
         <div class="container nav-content">
-            <a href="#" class="logo">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-                </svg>
-                Timiclaw <span class="mono">FRAMEWORK</span>
+            <a href="#" class="logo"
+                style="font-family: 'Arial Black', sans-serif; font-size: 1.8rem; letter-spacing: -1px; text-transform: uppercase; text-decoration: none;">
+                <span style="color: #007bff; text-shadow: 2px 2px 0px #000;">TIMI</span><span
+                    style="color: #00ff88; text-shadow: 2px 2px 0px #000;">CLAW</span>
             </a>
             <div class="nav-links">
                 <a href="#comparison">Compare Frameworks</a>
@@ -445,8 +482,16 @@
                 </div>
             </div>
         </div>
+        </div>
 
-        <div class="terminal-window">
+        <!-- Mascot -->
+        <div
+            style="position: absolute; left: 5%; bottom: 10%; width: 320px; z-index: 10; pointer-events: none; mix-blend-mode: screen;">
+            <img src="assets/timi-mascot.jpg" alt="Timi the Bot Rex"
+                style="width: 100%; height: auto; mask-image: linear-gradient(to bottom, black 85%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 85%, transparent 100%);">
+        </div>
+
+        <div class="terminal-window" style="right: 5%; top: 15%;">
             <div class="terminal-header">
                 <div style="display:flex; gap:8px;">
                     <div style="width:12px;height:12px;border-radius:50%;background:#ff5f56;"></div>
@@ -480,58 +525,142 @@
                 <thead>
                     <tr>
                         <th>Specification</th>
-                        <th class="highlight-col" style="color: var(--accent);">Timiclaw</th>
-                        <th>OpenClaw</th>
+                        <th class="highlight-col" style="color: var(--accent);">TimiClaw</th>
                         <th>PicoClaw</th>
                         <th>NanoBot</th>
+                        <th>OpenClaw</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td>Framework Type</td>
-                        <td class="highlight-col"><span class="check">Embedded (C++)</span></td>
-                        <td>Desktop (Python)</td>
-                        <td>Desktop (Go)</td>
-                        <td>Lightweight (Python)</td>
+                        <td>Core Architecture</td>
+                        <td class="highlight-col"><span class="check">Microcontroller (No OS)</span></td>
+                        <td>Linux Binary (Go)</td>
+                        <td>Python Script (MCP)</td>
+                        <td>Electron App</td>
                     </tr>
                     <tr>
-                        <td>Use Case</td>
-                        <td class="highlight-col"><strong>Physical Automation</strong></td>
-                        <td>Complete Assistant</td>
-                        <td>Fast CLI Assistant</td>
-                        <td>Experimental / Edu</td>
+                        <td>RAM Usage</td>
+                        <td class="highlight-col"><span class="check">&lt; 300 KB</span></td>
+                        <td>&lt; 10 MB</td>
+                        <td>~50 MB</td>
+                        <td>&gt; 500 MB</td>
                     </tr>
                     <tr>
-                        <td>Hardware Target</td>
-                        <td class="highlight-col"><span class="check">Microcontrollers (ESP32)</span></td>
-                        <td>PC / Mac / VPS</td>
-                        <td>PC / Mac / Pi Zero</td>
-                        <td>PC / Mac</td>
-                    </tr>
-                    <tr>
-                        <td>Physical I/O</td>
-                        <td class="highlight-col"><span class="check">Native (GPIO)</span></td>
-                        <td><span class="cross">Via Plugins Only</span></td>
-                        <td><span class="cross">None</span></td>
-                        <td><span class="cross">None</span></td>
-                    </tr>
-                    <tr>
-                        <td>Memory Footprint</td>
-                        <td class="highlight-col"><span class="check">~200 KB RAM</span></td>
-                        <td>~500 MB RAM</td>
-                        <td>~10 MB RAM</td>
-                        <td>~50 MB RAM</td>
-                    </tr>
-                    <tr>
-                        <td>Boot Time</td>
-                        <td class="highlight-col"><span class="check">Instant (<1s)< /span>
-                        </td>
-                        <td>Slow (Python Import)</td>
-                        <td>Fast (~1s)</td>
+                        <td>Startup Time</td>
+                        <td class="highlight-col"><span class="check">Instant (0.1s)</span></td>
+                        <td>Fast (&lt;1s)</td>
                         <td>Moderate</td>
+                        <td>Slow (&gt;30s)</td>
+                    </tr>
+                    <tr>
+                        <td>Hardware Cost</td>
+                        <td class="highlight-col"><span class="check">$5 (ESP32)</span></td>
+                        <td>$10 (Pi Zero)</td>
+                        <td>$35 (Pi 4)</td>
+                        <td>$500+ (PC/Mac)</td>
+                    </tr>
+                    <tr>
+                        <td>Attack Surface</td>
+                        <td class="highlight-col"><span class="check">Zero (No Shell)</span></td>
+                        <td>Low (Sandboxed)</td>
+                        <td>Medium (Python)</td>
+                        <td>High (Full OS)</td>
                     </tr>
                 </tbody>
             </table>
+        </div>
+    </section>
+
+    <!-- Code Comparison -->
+    <section id="code" style="background: var(--bg); padding-top: 0;">
+        <div class="container">
+            <h2 class="text-gradient" style="text-align: center; font-size: 2.5rem; margin-bottom: 3rem;">Metal vs.
+                Middleware</h2>
+            <div class="grid" style="margin-top: 0;">
+                <!-- TimiClaw -->
+                <div>
+                    <div class="lang-badge"
+                        style="background: rgba(40,167,69,0.1); color: #4cd964; border: 1px solid #4cd964;">TIMICLAW
+                        (NATIVE C++)</div>
+                    <div class="code-box">
+                        <span class="cmt">// Task: Turn on Fan if Hot</span><br>
+                        <span class="kwd">void</span> <span class="fn">loop</span>() {<br>
+                        &nbsp;&nbsp;<span class="kwd">if</span> (sensor.<span class="fn">read</span>() > 30.0) {<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;<span class="fn">digitalWrite</span>(FAN_PIN, HIGH);<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;agent.<span class="fn">notify</span>(<span class="cpp-str">"Cooling
+                            ON"</span>);<br>
+                        &nbsp;&nbsp;}<br>
+                        }<br>
+                        <br>
+                        <span class="cmt">// Execution: 0.005ms (Instant)</span>
+                    </div>
+                </div>
+
+                <!-- Desktop Agent -->
+                <div>
+                    <div class="lang-badge"
+                        style="background: rgba(255,87,34,0.1); color: #ff5722; border: 1px solid #ff5722;">DESKTOP
+                        AGENT (PYTHON)</div>
+                    <div class="code-box" style="opacity: 0.7;">
+                        <span class="cmt"># Task: Request Smart Home API</span><br>
+                        <span class="kwd">async def</span> <span class="fn">check_temp</span>():<br>
+                        &nbsp;&nbsp;<span class="kwd">try</span>:<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;<span class="kwd">await</span> hass_api.<span
+                            class="fn">call</span>(<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;domain=<span class="cpp-str">"switch"</span>, service=<span
+                            class="cpp-str">"on"</span>...<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;)<br>
+                        &nbsp;&nbsp;<span class="kwd">except</span> APIError:<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;<span class="fn">print</span>(<span class="cpp-str">"WiFi
+                            Timeout..."</span>)<br>
+                        <br>
+                        <span class="cmt"># Execution: ~500ms + Network Lag</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Code Volume Comparison -->
+    <section id="volume" style="background: var(--bg); padding-top: 0; border-top: none;">
+        <div class="container">
+            <h2 class="text-gradient" style="text-align: center; font-size: 2.5rem; margin-bottom: 1rem;">Codebase
+                Efficiency</h2>
+            <p style="color: var(--text-secondary); text-align: center; max-width: 600px; margin: 0 auto 3rem auto;">
+                Bloat is the enemy of reliability. TimiClaw does more with less.
+            </p>
+
+            <div
+                style="max-width: 800px; margin: 0 auto; background: #111; padding: 2rem; border-radius: 12px; border: 1px solid var(--border);">
+                <!-- TimiClaw Bar -->
+                <div style="margin-bottom: 2rem;">
+                    <div
+                        style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; color: #fff; font-weight: 600;">
+                        <span>TIMICLAW</span>
+                        <span style="color: var(--accent);">~6,000 Lines</span>
+                    </div>
+                    <div style="width: 100%; background: #222; height: 24px; border-radius: 4px; overflow: hidden;">
+                        <div style="width: 12%; background: var(--accent); height: 100%;"></div>
+                    </div>
+                    <p style="font-size: 0.8rem; color: #666; margin-top: 0.5rem;">Lean. Audit-friendly. Zero hidden
+                        magic.</p>
+                </div>
+
+                <!-- Competitor Bar -->
+                <div>
+                    <div
+                        style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; color: #fff; font-weight: 600;">
+                        <span>OPENCLAW (DESKTOP)</span>
+                        <span style="color: var(--text-secondary);">~430,000+ Lines</span>
+                    </div>
+                    <div style="width: 100%; background: #222; height: 24px; border-radius: 4px; overflow: hidden;">
+                        <div style="width: 100%; background: #444; height: 100%;"></div>
+                    </div>
+                    <p style="font-size: 0.8rem; color: #666; margin-top: 0.5rem;">Heavy. Full of dependencies. Hard to
+                        secure.</p>
+                </div>
+            </div>
         </div>
     </section>
 

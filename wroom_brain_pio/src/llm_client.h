@@ -12,5 +12,7 @@ bool llm_understand_media(const String &instruction, const String &mime_type,
                           const String &base64_data, String &reply_out, String &error_out);
 bool llm_parse_email_request(const String &message, String &to_out, String &subject_out,
                              String &body_out, String &error_out);
+bool llm_parse_update_request(const String &message, String &url_out, bool &should_update_out,
+                              bool &check_github_out, String &error_out);
 
 #endif
