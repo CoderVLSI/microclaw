@@ -129,11 +129,13 @@
         }
 
         .hero {
-            height: 90vh;
+            min-height: 100vh;
             display: flex;
             align-items: center;
             position: relative;
-            overflow: hidden;
+            padding-top: 80px;
+            /* Clear fixed nav */
+            /* overflow: hidden; Removed to prevent clipping */
         }
 
         .hero-bg {
@@ -147,11 +149,25 @@
             opacity: 0.6;
             mask-image: linear-gradient(to right, transparent, black);
             -webkit-mask-image: linear-gradient(to right, transparent, black);
+            overflow: hidden;
+            /* Keep background contained */
+        }
+
+        .hero .container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 100%;
+            position: relative;
         }
 
         .hero-content {
-            max-width: 550px;
+            flex: 1;
+            max-width: 600px;
             z-index: 1;
+            margin-left: 350px;
+            /* Clear Mascot */
+            margin-right: 2rem;
         }
 
         .hero h1 {
@@ -168,10 +184,12 @@
 
         .hero-stats {
             display: flex;
-            gap: 3rem;
+            gap: 2rem;
             margin-top: 3rem;
             border-top: 1px solid var(--border);
             padding-top: 2rem;
+            flex-wrap: wrap;
+            /* Prevent cutoff */
         }
 
         .stat-item h4 {
@@ -189,9 +207,10 @@
 
         /* Terminals */
         .terminal-window {
-            position: absolute;
-            right: 5%;
-            top: 20%;
+            position: relative;
+            /* Remove absolute positioning to prevent overlap */
+            right: auto;
+            top: auto;
             width: 450px;
             height: 500px;
             background: rgba(10, 10, 10, 0.9);
@@ -378,9 +397,16 @@
                 display: none;
             }
 
+            .hero .container {
+                flex-direction: column;
+                justify-content: center;
+            }
+
             .hero-content {
+                margin-left: 0;
                 max-width: 100%;
                 text-align: center;
+                margin-bottom: 2rem;
             }
 
             .hero-stats {
@@ -480,37 +506,43 @@
                         <p>Fleet Ready</p>
                     </div>
                 </div>
-            </div>
-        </div>
-        </div>
+            </div> <!-- Close hero-content -->
 
-        <!-- Mascot -->
+            <!-- Terminal (Flex Item) -->
+            <div id="hero-terminal" class="terminal-window">
+                <div class="terminal-header">
+                    <div style="display:flex; gap:8px;">
+                        <div onclick="toggleTerminal()"
+                            style="width:12px;height:12px;border-radius:50%;background:#ff5f56;cursor:pointer;"
+                            title="Close/Minimize"></div>
+                        <div onclick="toggleTerminal()"
+                            style="width:12px;height:12px;border-radius:50%;background:#ffbd2e;cursor:pointer;"
+                            title="Minimize"></div>
+                        <div style="width:12px;height:12px;border-radius:50%;background:#27c93f;"></div>
+                    </div>
+                    <span>timiclaw@embedded-host ~</span>
+                </div>
+                <div class="terminal-body" id="term-body">
+                    <div class="msg sys">Booting Framework v1.2... Done (800ms).</div>
+                    <div class="msg bot">Framework Status: ACTIVE<br>Core: ESP32-WROOM<br>Agent: Connected (Gemini 2.0
+                        Flash)<br>Sensors: Ready.</div>
+                </div>
+                <div class="terminal-input">
+                    <span class="prompt">$</span>
+                    <input type="text" class="input-field" id="term-input" placeholder="Interact with Framework..."
+                        autocomplete="off">
+                </div>
+            </div>
+
+        </div> <!-- Close container -->
+
+        <!-- Mascot (Absolute in Header) -->
         <div
             style="position: absolute; left: 5%; bottom: 10%; width: 320px; z-index: 10; pointer-events: none; mix-blend-mode: screen;">
             <img src="assets/timi-mascot.jpg" alt="Timi the Bot Rex"
                 style="width: 100%; height: auto; mask-image: linear-gradient(to bottom, black 85%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 85%, transparent 100%);">
         </div>
 
-        <div class="terminal-window" style="right: 5%; top: 15%;">
-            <div class="terminal-header">
-                <div style="display:flex; gap:8px;">
-                    <div style="width:12px;height:12px;border-radius:50%;background:#ff5f56;"></div>
-                    <div style="width:12px;height:12px;border-radius:50%;background:#ffbd2e;"></div>
-                    <div style="width:12px;height:12px;border-radius:50%;background:#27c93f;"></div>
-                </div>
-                <span>timiclaw@embedded-host ~</span>
-            </div>
-            <div class="terminal-body" id="term-body">
-                <div class="msg sys">Booting Framework v1.2... Done (800ms).</div>
-                <div class="msg bot">Framework Status: ACTIVE<br>Core: ESP32-WROOM<br>Agent: Connected (Gemini 2.0
-                    Flash)<br>Sensors: Ready.</div>
-            </div>
-            <div class="terminal-input">
-                <span class="prompt">$</span>
-                <input type="text" class="input-field" id="term-input" placeholder="Interact with Framework..."
-                    autocomplete="off">
-            </div>
-        </div>
     </header>
 
     <!-- Framework Comparison -->
@@ -761,20 +793,27 @@
             <h2 class="text-gradient" style="font-size: 2.5rem; margin-bottom: 2rem;">Get the Framework</h2>
 
             <div style="display: flex; justify-content: center; gap: 2rem; flex-wrap: wrap;">
-                <div class="installer-box">
-                    <h3 style="color: #fff;">Source Code</h3>
-                    <p style="color: #666; font-size: 0.9rem; margin-top: 0.5rem;">C++ / PlatformIO Project</p>
+                <div class="installer-box"
+                    style="width: 300px; height: 320px; display: flex; flex-direction: column; justify-content: space-between; align-items: center;">
+                    <div>
+                        <h3 style="color: #fff;">Source Code</h3>
+                        <p style="color: #666; font-size: 0.9rem; margin-top: 0.5rem;">C++ / PlatformIO Project</p>
+                    </div>
                     <a href="https://github.com/CoderVLSI/timiclaw" class="btn-primary"
-                        style="margin-top: 1.5rem; background: #333; color: #fff; text-decoration: none;">View on
-                        GitHub</a>
-                    <div style="font-size: 0.8rem; color: #555; margin-top: 0.5rem;">Apache 2.0 License</div>
+                        style="width: 100%; text-align: center; background: #333; color: #fff; text-decoration: none; display: block; padding: 1rem;">View
+                        on GitHub</a>
+                    <div style="font-size: 0.8rem; color: #555;">Apache 2.0 License</div>
                 </div>
 
-                <div class="installer-box" style="border-color: var(--accent);">
-                    <h3 style="color: var(--accent);">Binary Release</h3>
-                    <p style="color: #666; font-size: 0.9rem; margin-top: 0.5rem;">Pre-compiled Firmware</p>
-                    <a href="#" class="download-btn">Download v1.2.0</a>
-                    <div style="font-size: 0.8rem; color: #555; margin-top: 0.5rem;">ESP32-WROOM Compatible</div>
+                <div class="installer-box"
+                    style="width: 300px; height: 320px; display: flex; flex-direction: column; justify-content: space-between; align-items: center; border-color: var(--accent);">
+                    <div>
+                        <h3 style="color: var(--accent);">Binary Release</h3>
+                        <p style="color: #666; font-size: 0.9rem; margin-top: 0.5rem;">Pre-compiled Firmware</p>
+                    </div>
+                    <a href="https://github.com/CoderVLSI/Timiclaw/releases/tag/v1.0" class="download-btn"
+                        target="_blank" style="width: 100%; display: block; text-align: center;">Download v1.0</a>
+                    <div style="font-size: 0.8rem; color: #555;">ESP32-WROOM Compatible</div>
                 </div>
             </div>
         </div>
@@ -820,6 +859,25 @@
                 body.scrollTop = body.scrollHeight;
             }
         });
+    </script>
+    <script>
+        function toggleTerminal() {
+            const term = document.getElementById('hero-terminal');
+            const body = term.querySelector('.terminal-body');
+            const input = term.querySelector('.terminal-input');
+
+            if (term.style.height === '40px') {
+                // Restore
+                term.style.height = '500px';
+                body.style.display = 'block';
+                input.style.display = 'flex';
+            } else {
+                // Minimize
+                term.style.height = '40px';
+                body.style.display = 'none';
+                input.style.display = 'none';
+            }
+        }
     </script>
 </body>
 

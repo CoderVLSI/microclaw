@@ -1593,7 +1593,8 @@ bool tool_registry_execute(const String &input, String &out) {
   }
 
   // Natural language update request handling
-  if (looks_like_update_request(cmd_lc) && !cmd_lc.startsWith("update ")) {
+  // Skip if it's "update http/https" (let exact handler process URLs)
+  if (looks_like_update_request(cmd_lc) && !cmd_lc.startsWith("update http")) {
     String url;
     bool should_update;
     bool check_github = false;
@@ -1727,6 +1728,87 @@ bool tool_registry_execute(const String &input, String &out) {
 
   // Update command - show firmware info or trigger OTA update from URL
   if (cmd_lc == "update") {
+    // Check if user wants latest from GitHub (check original input for keywords)
+    String input_lc = input;
+    input_lc.toLowerCase();
+    bool wants_latest = (input_lc.indexOf("latest") >= 0 || input_lc.indexOf("newest") >= 0 ||
+                        input_lc.indexOf("github") >= 0 || input_lc.indexOf("to version") >= 0);
+
+    if (wants_latest) {
+      // User wants to check GitHub for latest release
+      out = "=== Checking GitHub Releases ===\n\n";
+
+      String github_repo = GITHUB_REPO;
+      if (github_repo.length() == 0) {
+        github_repo = "timiclaw/timiclaw";
+      }
+
+      out += "Repo: " + github_repo + "\n";
+      out += "Fetching latest release...\n";
+
+      // Fetch latest release from GitHub API
+      WiFiClientSecure client;
+      client.setInsecure();
+      HTTPClient http;
+
+      String api_url = "https://api.github.com/repos/" + github_repo + "/releases/latest";
+      Serial.println("[update] Fetching: " + api_url);
+
+      if (http.begin(client, api_url)) {
+        int http_code = http.GET();
+
+        if (http_code == 200) {
+          String payload = http.getString();
+
+          // Parse JSON to find version and download URL
+          int tag_idx = payload.indexOf("\"tag_name\":");
+          int assets_idx = payload.indexOf("\"assets\":");
+          int name_idx = payload.indexOf("\"name\":\"firmware.bin\"", assets_idx);
+          int url_idx = payload.indexOf("\"browser_download_url\":", name_idx);
+
+          if (tag_idx > 0 && assets_idx > 0 && name_idx > 0 && url_idx > 0) {
+            // Extract version tag
+            int tag_start = payload.indexOf("\"", tag_idx + 11) + 1;
+            int tag_end = payload.indexOf("\"", tag_start);
+            String version = payload.substring(tag_start, tag_end);
+
+            // Extract download URL
+            int url_start = payload.indexOf("\"", url_idx + 23) + 1;
+            int url_end = payload.indexOf("\"", url_start);
+            String download_url = payload.substring(url_start, url_end);
+
+            // Store pending update for "yes" confirmation
+            s_pending_update.available = true;
+            s_pending_update.version = version;
+            s_pending_update.download_url = download_url;
+            s_pending_update.notified_ms = millis();
+
+            out += "\nLatest Release: " + version + "\n";
+            out += "Reply **yes** to update now\n";
+            out += "(ESP32 will restart after update)";
+
+            Serial.println("[update] Latest: " + version + " from " + download_url);
+            http.end();
+            return true;
+          } else {
+            out += "\nNo firmware.bin found in release\n";
+            out += "Please upload firmware.bin to GitHub Releases";
+            http.end();
+            return true;
+          }
+        } else {
+          out += "\nGitHub API HTTP " + String(http_code) + "\n";
+          out += "Check that GITHUB_REPO is set correctly";
+          http.end();
+          return true;
+        }
+      } else {
+        out = "\nCould not connect to GitHub API";
+        return true;
+      }
+    }
+
+    // Show firmware info
     out = "=== Firmware Update ===\n\n";
     out += "Current Firmware:\n";
     out += "Sketch Size: " + String(ESP.getSketchSize() / 1024) + " KB\n";

@@ -47,7 +47,7 @@ static bool should_try_route(const String &msg) {
       "logs",       "time",       "timezone",   "task ",      "memory",     "remember ",
       "forget",     "flash ",     "blink ",     "led ",       "sensor ",    "relay ",
       "safe mode",  "email ",     "plan ",      "confirm",    "cancel",      "create ",
-      "build ",     "make ",      "generate ",
+      "build ",     "make ",      "generate ",  "update",     "upgrade",    "firmware",
   };
 
   for (size_t i = 0; i < (sizeof(prefixes) / sizeof(prefixes[0])); i++) {
