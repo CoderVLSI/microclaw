@@ -62,7 +62,9 @@ static bool should_try_route(const String &msg) {
   }
 
   if (lc.indexOf("every day") >= 0 || lc.indexOf("everyday") >= 0 || lc.indexOf("daily") >= 0 ||
-      lc.indexOf("at ") >= 0 || lc.indexOf("reminder") >= 0 || lc.indexOf("web search") >= 0) {
+      lc.indexOf("at ") >= 0 || lc.indexOf("reminder") >= 0 || lc.indexOf("web search") >= 0 ||
+      lc.indexOf("update") >= 0 || lc.indexOf("upgrade") >= 0 || lc.indexOf("firmware") >= 0 ||
+      lc.indexOf("new version") >= 0 || lc.indexOf("latest") >= 0) {
     return true;
   }
 
