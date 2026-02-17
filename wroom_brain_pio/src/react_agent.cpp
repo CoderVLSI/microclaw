@@ -18,6 +18,8 @@ static const ReactTool s_react_tools[] = {
     {"remember", "Save information to long-term memory (MEMORY.md)", "<text to remember>", "remember: User likes pineapple pizza"},
     {"memory_read", "Read all stored memories from MEMORY.md", "none", "memory_read"},
     {"memory_clear", "Clear all stored memories from MEMORY.md", "none", "memory_clear"},
+    {"file_memory", "Show SPIFFS file system info", "none", "file_memory"},
+    {"user_read", "Read user profile (USER.md)", "none", "user_read"},
     {"soul_show", "Show current personality/soul (SOUL.md)", "none", "soul_show"},
     {"soul_set", "Set new personality/soul (SOUL.md)", "<soul description>", "soul_set: You are a helpful robot assistant"},
     {"soul_clear", "Clear the soul/personality", "none", "soul_clear"},
@@ -34,11 +36,13 @@ static const ReactTool s_react_tools[] = {
     {"reminder_set_daily", "Set a daily reminder at specific time", "<HH:MM> <message>", "reminder_set_daily: 09:00 Take morning medicine"},
     {"reminder_show", "Show all active reminders", "none", "reminder_show"},
     {"reminder_clear", "Clear all reminders", "none", "reminder_clear"},
+    {"reminder_run", "Manually trigger a reminder check", "none", "reminder_run"},
 
     // Time & Timezone
     {"time_show", "Show current time and timezone", "none", "time_show"},
     {"timezone_set", "Set user timezone", "<timezone>", "timezone_set: IST"},
     {"timezone_show", "Show current timezone", "none", "timezone_show"},
+    {"timezone_clear", "Clear the timezone setting", "none", "timezone_clear"},
 
     // Email
 #if ENABLE_EMAIL
@@ -48,17 +52,52 @@ static const ReactTool s_react_tools[] = {
     {"send_email", "Send an email directly", "<to> <subject> <message>", "send_email: user@example.com Meeting tomorrow Can we meet at 2pm?"},
 #endif
 
+    // Image Generation
+#if ENABLE_IMAGE_GEN
+    {"generate_image", "Generate an image using AI", "<prompt description>", "generate_image: A cute dinosaur robot"},
+#endif
+
     // System Info
     {"status", "Show system status and uptime", "none", "status"},
     {"health", "Show detailed health check", "none", "health"},
     {"specs", "Show hardware/software specifications", "none", "specs"},
     {"usage", "Show token and API usage statistics", "none", "usage"},
+    {"usage_reset", "Reset usage statistics", "none", "usage_reset"},
     {"security", "Show security settings and safe mode", "none", "security"},
+
+    // System Controls
+    {"logs", "Show recent system logs", "none", "logs"},
+    {"logs_clear", "Clear all system logs", "none", "logs_clear"},
+    {"safe_mode", "Toggle safe mode on/off", "none", "safe_mode"},
+    {"safe_mode_on", "Enable safe mode (confirm required)", "none", "safe_mode_on"},
+    {"safe_mode_off", "Disable safe mode", "none", "safe_mode_off"},
+
+    // Firmware Updates
+    {"update", "Check for firmware updates from GitHub", "none", "update"},
+    {"update", "Update firmware from specific URL", "<url>", "update: https://raw.githubusercontent.com/user/repo/main/firmware.bin"},
 
     // Model Configuration
     {"model_list", "List available LLM models", "none", "model_list"},
+    {"model_status", "Show current model and fallback status", "none", "model_status"},
     {"model_use", "Switch to a different LLM model", "<model_name>", "model_use: gpt-4o-mini"},
     {"model_set", "Configure model with provider and base URL", "<provider>|<model>|<base_url>|<api_key>", "model_set: openai|gpt-4o-mini|https://api.openai.com|sk-xxx"},
+    {"model_failed", "Show failed providers", "none", "model_failed"},
+    {"model_reset_failed", "Reset failed provider status", "none", "model_reset_failed"},
+
+    // Heartbeat System
+    {"heartbeat_show", "Show heartbeat configuration", "none", "heartbeat_show"},
+    {"heartbeat_set", "Set heartbeat instructions", "<instructions>", "heartbeat_set: Check health and report any issues"},
+    {"heartbeat_clear", "Clear heartbeat configuration", "none", "heartbeat_clear"},
+
+    // Planning (if enabled)
+#if ENABLE_PLAN
+    {"plan", "Create a plan for a coding task", "<task description>", "plan: Add a new feature for reminders"},
+#endif
+
+    // Pending Actions
+    {"cancel", "Cancel any pending confirmation", "none", "cancel"},
+    {"confirm", "Confirm a pending action", "none", "confirm"},
+    {"yes", "Confirm a pending action", "none", "yes"},
 };
 // clang-format on
 
