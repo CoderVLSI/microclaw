@@ -600,8 +600,90 @@ String extract_routed_command(const String &raw) {
 
 }  // namespace
 
+// ============================================================================
+// PUBLIC API FUNCTIONS
+// ============================================================================
+
+// Generate LLM response with custom system prompt (for ReAct, etc.)
+bool llm_generate_with_custom_prompt(const String &system_prompt, const String &task,
+                                     bool include_memory, String &reply_out, String &error_out) {
+  // Enrich task with memory if requested
+  String enriched_task = task;
+  if (include_memory) {
+    String notes;
+    String mem_err;
+    if (memory_get_notes(notes, mem_err)) {
+      notes.trim();
+      if (notes.length() > 0) {
+        if (notes.length() > 400) {
+          notes = notes.substring(notes.length() - 400);
+        }
+        enriched_task = String("Persistent memory:\n") + notes + "\n\nTask:\n" + task;
+      }
+    }
+  }
+
+  if (enriched_task.length() == 0) {
+    error_out = "Missing task text";
+    return false;
+  }
+
+  // Get primary provider config
+  String primary_provider;
+  String primary_model;
+  ModelConfigInfo config;
+
+  if (model_config_get_active_config(config)) {
+    primary_provider = config.provider;
+    primary_model = config.model;
+  } else {
+    primary_provider = String(LLM_PROVIDER);
+    primary_provider.toLowerCase();
+    primary_model = String(LLM_MODEL);
+  }
+
+  if (primary_provider == "none" || primary_provider.length() == 0) {
+    error_out = "LLM disabled. Use: /model set <provider> <api_key>";
+    return false;
+  }
+
+  String primary_key = model_config_get_api_key(primary_provider);
+  if (primary_key.length() == 0) {
+    error_out = "No API key for " + primary_provider;
+    return false;
+  }
+
+  // Call appropriate provider
+  String prov = primary_provider;
+  prov.toLowerCase();
+  bool result = false;
+
+  if (prov == "openai") {
+    String mod = primary_model.length() > 0 ? primary_model : String("gpt-4.1-mini");
+    String baseUrl = config.baseUrl.length() > 0 ? config.baseUrl : String(LLM_OPENAI_BASE_URL);
+    result = call_openai_like(baseUrl, primary_key, mod, system_prompt, enriched_task, reply_out, error_out);
+  } else if (prov == "anthropic") {
+    String mod = primary_model.length() > 0 ? primary_model : String("claude-3-5-sonnet-latest");
+    String baseUrl = config.baseUrl.length() > 0 ? config.baseUrl : String(LLM_ANTHROPIC_BASE_URL);
+    result = call_anthropic(baseUrl, primary_key, mod, system_prompt, enriched_task, reply_out, error_out);
+  } else if (prov == "gemini") {
+    String mod = primary_model.length() > 0 ? primary_model : String("gemini-2.0-flash");
+    String baseUrl = config.baseUrl.length() > 0 ? config.baseUrl : String(LLM_GEMINI_BASE_URL);
+    result = call_gemini(baseUrl, primary_key, mod, system_prompt, enriched_task, reply_out, error_out);
+  } else if (prov == "glm") {
+    String mod = primary_model.length() > 0 ? primary_model : String("glm-4.7");
+    String baseUrl = config.baseUrl.length() > 0 ? config.baseUrl : String(LLM_GLM_BASE_URL);
+    result = call_glm_zai(baseUrl, primary_key, mod, system_prompt, enriched_task, reply_out, error_out);
+  } else {
+    error_out = "Unsupported provider: " + primary_provider;
+    return false;
+  }
+
+  return result;
+}
+
 bool llm_generate_plan(const String &task, String &plan_out, String &error_out) {
-  return llm_generate_with_prompt(String(kPlanSystemPrompt), task, true, plan_out, error_out);
+  return llm_generate_with_custom_prompt(String(kPlanSystemPrompt), task, true, plan_out, error_out);
 }
 
 bool llm_generate_reply(const String &message, String &reply_out, String &error_out) {
@@ -651,7 +733,7 @@ bool llm_generate_reply(const String &message, String &reply_out, String &error_
     }
   }
 
-  bool result = llm_generate_with_prompt(system_prompt, task, true, reply_out, error_out);
+  bool result = llm_generate_with_custom_prompt(system_prompt, task, true, reply_out, error_out);
 
   // Auto-save important info to MEMORY.md
   if (result) {
@@ -716,7 +798,7 @@ bool llm_generate_heartbeat(const String &heartbeat_doc, String &reply_out, Stri
   }
 
   task = "Heartbeat instructions:\n" + task + "\n\nGenerate current heartbeat update.";
-  return llm_generate_with_prompt(String(kHeartbeatSystemPrompt), task, false, reply_out, error_out);
+  return llm_generate_with_custom_prompt(String(kHeartbeatSystemPrompt), task, false, reply_out, error_out);
 }
 
 bool llm_route_tool_command(const String &message, String &command_out, String &error_out) {
@@ -724,7 +806,7 @@ bool llm_route_tool_command(const String &message, String &command_out, String &
 
   String task = "User message:\n" + message + "\n\nReturn one line only.";
   String raw;
-  if (!llm_generate_with_prompt(String(kRouteSystemPrompt), task, false, raw, error_out)) {
+  if (!llm_generate_with_custom_prompt(String(kRouteSystemPrompt), task, false, raw, error_out)) {
     return false;
   }
 

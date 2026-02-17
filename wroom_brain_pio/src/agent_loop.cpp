@@ -16,6 +16,7 @@
 #include "tool_registry.h"
 #include "transport_telegram.h"
 #include "usage_stats.h"
+#include "react_agent.h"
 
 // Store last LLM response for emailing code
 static String s_last_llm_response = "";
@@ -130,6 +131,24 @@ static void on_incoming_message(const String &msg) {
       }
     }
 
+    // Try ReAct agent for complex multi-step reasoning
+    if (react_agent_should_use(trimmed)) {
+      String react_response, react_error;
+      event_log_append("ReAct: Starting agent loop");
+      if (react_agent_run(trimmed, react_response, react_error)) {
+        // Store the full response for potential email_code command
+        s_last_llm_response = react_response;
+
+        if (react_response.length() > 1400) {
+          react_response = react_response.substring(0, 1400) + "...";
+        }
+        send_and_record(msg, react_response);
+        return;
+      }
+      // If ReAct fails, fall through to normal LLM
+      Serial.println("[ReAct] Failed: " + react_error);
+    }
+
     String err;
     if (!llm_generate_reply(trimmed, response, err)) {
       send_and_record(msg, "ERR: " + err);
@@ -160,6 +179,7 @@ void agent_loop_init() {
   task_store_init();
 #endif
   tool_registry_init();
+  react_agent_init();  // Initialize ReAct agent with tool registry
   usage_init();
   status_led_init();
   scheduler_init();
