@@ -10,6 +10,7 @@
 #include "memory_store.h"
 #include "model_config.h"
 #include "persona_store.h"
+#include "usage_stats.h"
 
 namespace {
 
@@ -551,7 +552,22 @@ bool llm_generate_reply(const String &message, String &reply_out, String &error_
     }
   }
 
-  return llm_generate_with_prompt(system_prompt, task, true, reply_out, error_out);
+  bool result = llm_generate_with_prompt(system_prompt, task, true, reply_out, error_out);
+
+  // Track usage
+  String provider;
+  String model;
+  ModelConfigInfo config;
+  if (model_config_get_active_config(config)) {
+    provider = config.provider;
+    model = config.model;
+  } else {
+    provider = String(LLM_PROVIDER);
+    model = String(LLM_MODEL);
+  }
+  usage_record_call("chat", result ? 200 : 500, provider.c_str(), model.c_str());
+
+  return result;
 }
 
 bool llm_generate_heartbeat(const String &heartbeat_doc, String &reply_out, String &error_out) {
@@ -730,14 +746,17 @@ bool llm_generate_image(const String &prompt, String &base64_out, String &error_
     const HttpResult res = http_post_json(url, body, "Authorization", "Bearer " + api_key);
     if (res.status_code < 200 || res.status_code >= 300) {
       error_out = "DALL-E HTTP " + String(res.status_code);
+      usage_record_call("image", res.status_code, "openai", "dall-e-3");
       return false;
     }
 
     if (!extract_json_string_field(res.body, "b64_json", base64_out)) {
       error_out = "Could not parse DALL-E response";
+      usage_record_call("image", 500, "openai", "dall-e-3");
       return false;
     }
 
+    usage_record_call("image", 200, "openai", "dall-e-3");
     return true;
   }
 
@@ -835,19 +854,24 @@ bool llm_understand_media(const String &instruction, const String &mime_type,
   const HttpResult res = http_post_json(url, body, "x-goog-api-key", api_key);
   if (res.status_code < 200 || res.status_code >= 300) {
     error_out = summarize_http_error("Gemini media", res);
+    usage_record_call("media", res.status_code, "gemini", model.c_str());
     return false;
   }
 
   if (!parse_response_text(res.body, reply_out)) {
     error_out = "Could not parse Gemini media response";
+    usage_record_call("media", 500, "gemini", model.c_str());
     return false;
   }
 
   reply_out.trim();
   if (reply_out.length() == 0) {
     error_out = "Empty Gemini media response";
+    usage_record_call("media", 500, "gemini", model.c_str());
     return false;
   }
+
+  usage_record_call("media", 200, "gemini", model.c_str());
   return true;
 }
 

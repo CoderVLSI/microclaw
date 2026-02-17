@@ -13,6 +13,7 @@
 #include "task_store.h"
 #include "tool_registry.h"
 #include "transport_telegram.h"
+#include "usage_stats.h"
 
 // Store last LLM response for emailing code
 static String s_last_llm_response = "";
@@ -154,6 +155,7 @@ void agent_loop_init() {
   persona_init();
   task_store_init();
   tool_registry_init();
+  usage_init();
   status_led_init();
   scheduler_init();
   transport_telegram_init();

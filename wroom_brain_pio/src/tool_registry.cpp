@@ -18,6 +18,7 @@
 #include "transport_telegram.h"
 #include "web_job_client.h"
 #include "email_client.h"
+#include "usage_stats.h"
 
 namespace {
 
@@ -174,6 +175,7 @@ void build_help_text(String &out) {
       "help\n"
       "health\n"
       "specs\n"
+      "usage\n"
       "security\n"
       "update [url]\n"
       "relay_set <pin> <0|1> (requires confirm)\n"
@@ -229,7 +231,7 @@ static bool looks_like_update_request(const String &text_lc) {
 void tool_registry_init() {
   Serial.println(
       "[tools] allowlist: status, relay_set <pin> <0|1>, sensor_read <pin>, "
-      "flash_led [count], help, health, specs, security, update [url], confirm, cancel, plan <task>, "
+      "flash_led [count], help, health, specs, usage, security, update [url], confirm, cancel, plan <task>, "
       "reminder_set_daily/reminder_show/reminder_clear, timezone_show/timezone_set/timezone_clear, "
       "webjob_set_daily/webjob_show/webjob_run/webjob_clear, "
       "web_files_make, "
@@ -1548,6 +1550,17 @@ bool tool_registry_execute(const String &input, String &out) {
     out += wifi_health_line() + "\n";
     out += "RSSI: " + String(WiFi.RSSI()) + " dBm\n";
 
+    return true;
+  }
+
+  if (cmd_lc == "usage") {
+    usage_get_report(out);
+    return true;
+  }
+
+  if (cmd_lc == "usage_reset") {
+    usage_reset();
+    out = "Usage statistics have been reset.";
     return true;
   }
 
