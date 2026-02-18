@@ -4,495 +4,238 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TimiClaw Dashboard</title>
+    <title>Pi Zero Gameboy</title>
     <style>
-        :root {
-            --bg-color: #0f172a;
-            --sidebar-color: #1e293b;
-            --text-color: #e2e8f0;
-            --accent-color: #fca5a5;
-            /* Rose-300 */
-            --primary-color: #ef4444;
-            /* Red-500 */
-            --secondary-color: #334155;
-            --input-bg: #020617;
-            --border-color: #334155;
-        }
-
         body {
-            margin: 0;
-            font-family: 'Inter', system-ui, sans-serif;
-            background: var(--bg-color);
-            color: var(--text-color);
-            display: flex;
-            height: 100vh;
-            overflow: hidden;
-        }
-
-        /* Sidebar */
-        .sidebar {
-            width: 250px;
-            background: var(--sidebar-color);
-            padding: 20px;
+            background-color: #0d1117;
+            color: #00ff00;
+            font-family: 'Courier New', Courier, monospace;
             display: flex;
             flex-direction: column;
-            border-right: 1px solid var(--border-color);
-        }
-
-        .logo {
-            font-size: 1.5rem;
-            font-weight: bold;
-            color: var(--primary-color);
-            margin-bottom: 40px;
-            display: flex;
             align-items: center;
-            gap: 10px;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            text-align: center;
         }
 
-        .nav-item {
-            padding: 12px 15px;
-            margin-bottom: 5px;
-            cursor: pointer;
-            border-radius: 8px;
-            transition: background 0.2s;
-            color: #94a3b8;
-            font-weight: 500;
+        h1 {
+            font-size: 2.5rem;
+            text-shadow: 0 0 10px #00ff00;
+            margin-bottom: 0.5rem;
         }
 
-        .nav-item:hover,
-        .nav-item.active {
-            background: var(--secondary-color);
-            color: var(--text-color);
+        p {
+            font-size: 1.2rem;
+            opacity: 0.8;
+            margin-bottom: 2rem;
         }
 
-        .nav-item.active {
-            border-left: 3px solid var(--primary-color);
-        }
-
-        .status-box {
-            margin-top: auto;
-            padding: 15px;
-            background: #0f172a;
-            border-radius: 8px;
-            font-size: 0.8rem;
-        }
-
-        .status-row {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 5px;
-        }
-
-        /* Main Content */
-        .main {
-            flex: 1;
+        .console-container {
+            width: 300px;
+            height: 500px;
+            background: #c0c0c0;
+            border-radius: 10px 10px 40px 10px;
+            position: relative;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.2);
             display: flex;
             flex-direction: column;
-            height: 100%;
+            align-items: center;
+            padding-top: 30px;
+        }
+
+        .screen-bezel {
+            width: 260px;
+            height: 200px;
+            background: #555;
+            border-radius: 10px 10px 30px 10px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .screen {
+            width: 180px;
+            height: 150px;
+            background: #8bac0f;
+            box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            color: #0f380f;
+            font-weight: bold;
+            font-family: monospace;
+            overflow: hidden;
             position: relative;
         }
 
-        .tab-content {
-            display: none;
-            padding: 20px;
-            overflow-y: auto;
-            height: 100%;
-            box-sizing: border-box;
+        .screen::after {
+            content: "NINTENDO";
+            position: absolute;
+            bottom: 5px;
+            font-size: 10px;
+            opacity: 0.5;
         }
 
-        .tab-content.active {
-            display: flex;
-            flex-direction: column;
+        .brand {
+            margin-top: 10px;
+            color: #303080;
+            font-weight: bold;
+            font-style: italic;
+            align-self: flex-start;
+            margin-left: 30px;
         }
 
-        /* Chat */
-        #chat-history {
-            flex: 1;
-            overflow-y: auto;
-            padding: 20px;
+        .controls {
+            margin-top: 40px;
+            width: 100%;
+            height: 150px;
+            position: relative;
+        }
+
+        .d-pad {
+            position: absolute;
+            left: 30px;
+            top: 20px;
+            width: 90px;
+            height: 90px;
+        }
+
+        .d-pad div {
+            background: #333;
+            border-radius: 3px;
+            position: absolute;
+        }
+
+        .d-pad-h {
+            width: 90px;
+            height: 30px;
+            top: 30px;
+        }
+
+        .d-pad-v {
+            width: 30px;
+            height: 90px;
+            left: 30px;
+        }
+
+        .buttons {
+            position: absolute;
+            right: 30px;
+            top: 30px;
+        }
+
+        .btn {
+            width: 35px;
+            height: 35px;
+            background: #a90038;
+            border-radius: 50%;
+            display: inline-block;
+            margin-left: 10px;
+            box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.5);
+            cursor: pointer;
+        }
+
+        .btn:active {
+            box-shadow: inset 1px 1px 3px rgba(0, 0, 0, 0.5);
+            transform: translateY(2px);
+        }
+
+        .btn-label {
+            display: block;
+            font-size: 10px;
+            color: #303080;
+            margin-top: 5px;
+            text-align: right;
+            margin-right: 5px;
+        }
+
+        .start-select {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
             display: flex;
-            flex-direction: column;
             gap: 15px;
         }
 
-        .message {
-            max-width: 80%;
-            padding: 12px 16px;
-            border-radius: 12px;
-            line-height: 1.5;
-            white-space: pre-wrap;
-        }
-
-        .message.user {
-            align-self: flex-end;
-            background: var(--primary-color);
-            color: white;
-            border-bottom-right-radius: 2px;
-        }
-
-        .message.bot {
-            align-self: flex-start;
-            background: var(--secondary-color);
-            color: var(--text-color);
-            border-bottom-left-radius: 2px;
-        }
-
-        .chat-input-area {
-            padding: 20px;
-            background: var(--sidebar-color);
-            border-top: 1px solid var(--border-color);
-            display: flex;
-            gap: 10px;
-        }
-
-        input[type="text"],
-        textarea {
-            flex: 1;
-            padding: 12px;
-            border-radius: 8px;
-            border: 1px solid var(--border-color);
-            background: var(--input-bg);
-            color: white;
-            outline: none;
-            transition: border 0.2s;
-        }
-
-        input[type="text"]:focus,
-        textarea:focus {
-            border-color: var(--primary-color);
-        }
-
-        button {
-            padding: 12px 24px;
-            background: var(--primary-color);
-            color: white;
-            border: none;
-            border-radius: 8px;
+        .capsule {
+            width: 50px;
+            height: 12px;
+            background: #999;
+            border-radius: 10px;
+            transform: rotate(-25deg);
+            border: 1px solid #777;
             cursor: pointer;
-            font-weight: bold;
-            transition: opacity 0.2s;
         }
 
-        button:hover {
-            opacity: 0.9;
+        .capsule:active {
+            background: #777;
         }
 
-        /* Config */
-        .config-section {
-            max-width: 600px;
-            margin: 0 auto;
-            width: 100%;
-        }
-
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        label {
-            display: block;
-            margin-bottom: 8px;
-            color: #94a3b8;
-            font-size: 0.9rem;
-        }
-
-        .help-text {
-            font-size: 0.8rem;
-            color: #64748b;
-            margin-top: 5px;
-        }
-
-        h2 {
-            border-bottom: 1px solid var(--border-color);
-            padding-bottom: 10px;
-            margin-bottom: 20px;
-            color: var(--accent-color);
-        }
-
-        /* Status */
-        .status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-        }
-
-        .card {
-            background: var(--sidebar-color);
-            padding: 20px;
-            border-radius: 12px;
-            border: 1px solid var(--border-color);
-        }
-
-        .card h3 {
-            margin-top: 0;
-            color: #94a3b8;
-            font-size: 0.9rem;
-            text-transform: uppercase;
-        }
-
-        .card .value {
-            font-size: 1.5rem;
-            font-weight: bold;
-            color: var(--text-color);
-        }
-
-        /* Mobile */
-        @media (max-width: 768px) {
-            body {
-                flex-direction: column;
+        /* Blink animation for text */
+        @keyframes blink {
+            50% {
+                opacity: 0;
             }
+        }
 
-            .sidebar {
-                width: 100%;
-                height: auto;
-                flex-direction: row;
-                padding: 10px;
-                overflow-x: auto;
-                border-right: none;
-                border-bottom: 1px solid var(--border-color);
-            }
-
-            .status-box,
-            .logo {
-                display: none;
-            }
-
-            .nav-item {
-                white-space: nowrap;
-                margin-right: 10px;
-            }
+        .blink {
+            animation: blink 1s infinite;
         }
     </style>
 </head>
 
 <body>
 
-    <div class="sidebar">
-        <div class="logo">🦖 TimiClaw</div>
-        <div class="nav-item active" onclick="showTab('chat')">Chat</div>
-        <div class="nav-item" onclick="showTab('config')">Config</div>
-        <div class="nav-item" onclick="showTab('status')">System Status</div>
+    <h1>Raspberry Pi Zero 2W</h1>
+    <p>Gameboy Console Edition</p>
 
-        <div class="status-box">
-            <div class="status-row"><span>WiFi:</span> <span id="sb-rssi">--</span> dBm</div>
-            <div class="status-row"><span>Heap:</span> <span id="sb-heap">--</span> KB</div>
-        </div>
-    </div>
-
-    <div class="main">
-        <!-- CHAT TAB -->
-        <div id="tab-chat" class="tab-content active">
-            <div id="chat-history">
-                <div class="message bot">Hello! I am Timi. How can I help you today?</div>
-            </div>
-            <div class="chat-input-area">
-                <input type="text" id="chat-input" placeholder="Type a message..." onkeypress="handleEnter(event)">
-                <button onclick="sendMessage()">Send</button>
+    <!-- Console SVG/CSS Implementation -->
+    <div class="console-container">
+        <div class="screen-bezel">
+            <div class="screen">
+                <div style="margin-bottom: 20px;">INSERT CARTRIDGE</div>
+                <div class="blink">Wait...</div>
             </div>
         </div>
+        <div class="brand">Nintendo GAME BOY <span style="font-size: 10px;">TM</span></div>
 
-        <!-- CONFIG TAB -->
-        <div id="tab-config" class="tab-content">
-            <div class="config-section">
-                <h2>🤖 Model Configuration</h2>
-                <div class="form-group">
-                    <label>OpenAI API Key</label>
-                    <input type="password" id="cfg-openai" placeholder="sk-...">
-                </div>
-                <div class="form-group">
-                    <label>Anthropic API Key</label>
-                    <input type="password" id="cfg-anthropic" placeholder="sk-ant-...">
-                </div>
-                <div class="form-group">
-                    <label>Gemini API Key</label>
-                    <input type="password" id="cfg-gemini" placeholder="AIza...">
-                </div>
-                <div class="form-group">
-                    <label>Default Model</label>
-                    <input type="text" id="cfg-model" placeholder="gpt-4o">
-                    <div class="help-text">E.g., gpt-4o, claude-3-5-sonnet-20240620, google/gemini-2.0-flash-exp:free
-                    </div>
-                </div>
-                <button onclick="saveConfig()">Save Settings</button>
+        <div class="controls">
+            <div class="d-pad">
+                <div class="d-pad-h"></div>
+                <div class="d-pad-v"></div>
             </div>
-        </div>
 
-        <!-- STATUS TAB -->
-        <div id="tab-status" class="tab-content">
-            <h2>System Status</h2>
-            <div class="status-grid">
-                <div class="card">
-                    <h3>Uptime</h3>
-                    <div class="value" id="st-uptime">0s</div>
+            <div class="buttons">
+                <div style="display:inline-block; text-align:center;">
+                    <div class="btn" onclick="btnClick('B')"></div>
+                    <span class="btn-label">B</span>
                 </div>
-                <div class="card">
-                    <h3>Free Heap</h3>
-                    <div class="value" id="st-heap">0 KB</div>
+                <div style="display:inline-block; text-align:center; transform:translateY(-15px);">
+                    <div class="btn" onclick="btnClick('A')"></div>
+                    <span class="btn-label">A</span>
                 </div>
-                <div class="card">
-                    <h3>WiFi Signal</h3>
-                    <div class="value" id="st-rssi">0 dBm</div>
-                </div>
-                <div class="card">
-                    <h3>Active Provider</h3>
-                    <div class="value" id="st-provider">--</div>
-                </div>
+            </div>
+
+            <div class="start-select">
+                <div class="capsule" onclick="btnClick('SELECT')"></div>
+                <div class="capsule" onclick="btnClick('START')"></div>
             </div>
         </div>
     </div>
+
+    <p style="margin-top: 2rem; font-size: 0.8rem;">Powered by ESP32 &amp; TimiClaw Agent</p>
 
     <script>
-        // Tab Switching
-        function showTab(id) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-            document.getElementById('tab-' + id).classList.add('active');
-            document.querySelector(`.nav-item[onclick="showTab('${id}')"]`).classList.add('active');
-            if (id === 'chat') scrollToBottom();
+        function btnClick(btn) {
+            const screen = document.querySelector('.screen');
+            screen.innerHTML = '<div style="margin-bottom:20px;">PRESSED:</div><div style="font-size:24px;">' + btn + '</div>';
+            setTimeout(() => {
+                screen.innerHTML = '<div style="margin-bottom:20px;">INSERT CARTRIDGE</div><div class="blink">Wait...</div>';
+            }, 1000);
         }
-
-        // Chat Logic
-        const chatHistory = document.getElementById('chat-history');
-        let isSending = false;
-
-        function scrollToBottom() {
-            chatHistory.scrollTop = chatHistory.scrollHeight;
-        }
-
-        async function loadChatHistory() {
-            if (isSending) return;
-            try {
-                const res = await fetch('/api/chat');
-                const data = await res.json();
-                // Simple parsing of text log to html? 
-                // The history format from chat_history.cpp is: User: ... \n AI: ...
-                // We should parse this.
-                if (data.history) {
-                    renderChat(data.history);
-                }
-            } catch (e) { console.error(e); }
-        }
-
-        function renderChat(text) {
-            // Clear current? No, maybe check diff. For now, clear and rebuild (simple)
-            chatHistory.innerHTML = '';
-            const lines = text.split('\n');
-            let currentRole = 'bot';
-            let currentMsg = '';
-
-            lines.forEach(line => {
-                if (line.startsWith('User: ')) {
-                    if (currentMsg) appendMessage(currentRole, currentMsg);
-                    currentRole = 'user';
-                    currentMsg = line.substring(6);
-                } else if (line.startsWith('AI: ') || line.startsWith('Timi: ') || line.startsWith('Assistant: ')) {
-                    if (currentMsg) appendMessage(currentRole, currentMsg);
-                    currentRole = 'bot';
-                    if (line.startsWith('Assistant: ')) currentMsg = line.substring(11);
-                    else if (line.startsWith('Timi: ')) currentMsg = line.substring(6);
-                    else currentMsg = line.substring(4);
-                } else {
-                    currentMsg += '\n' + line;
-                }
-            });
-            if (currentMsg) appendMessage(currentRole, currentMsg);
-            scrollToBottom();
-        }
-
-        function appendMessage(role, text) {
-            const div = document.createElement('div');
-            div.className = `message ${role}`;
-            div.textContent = text.trim();
-            chatHistory.appendChild(div);
-        }
-
-        async function sendMessage() {
-            const input = document.getElementById('chat-input');
-            const text = input.value.trim();
-            if (!text) return;
-
-            // Optimistic append
-            appendMessage('user', text);
-            scrollToBottom();
-
-            // Optimistic clear
-            input.value = '';
-
-            isSending = true;
-            try {
-                const res = await fetch('/api/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text })
-                });
-                const data = await res.json();
-
-                // Backend queued it. History has it.
-                // Trigger immediate reload to show it.
-            } catch (e) {
-                console.error(e);
-                appendMessage('bot', 'Error: ' + e.message);
-            } finally {
-                isSending = false;
-                loadChatHistory(); // Load the new message immediately
-            }
-        }
-
-        function handleEnter(e) {
-            if (e.key === 'Enter') sendMessage();
-        }
-
-        // Config Logic
-        async function loadConfig() {
-            try {
-                const res = await fetch('/api/config');
-                const data = await res.json();
-                if (data.api_keys) {
-                    if (data.api_keys.openai) document.getElementById('cfg-openai').value = data.api_keys.openai; // masked
-                    if (data.api_keys.anthropic) document.getElementById('cfg-anthropic').value = data.api_keys.anthropic;
-                    if (data.api_keys.gemini) document.getElementById('cfg-gemini').value = data.api_keys.gemini;
-                }
-            } catch (e) { }
-        }
-
-        async function saveConfig() {
-            const payload = {
-                provider: 'openai', // Default to openai for generic save? Or handle each?
-                key: document.getElementById('cfg-openai').value, // Need logic to detect which changed
-                // This needs improvement. For now, let's assume user sends one at a time via specific buttons?
-                // Or just send what changed.
-            };
-            // TODO: Refine config saving
-            alert('Config saving implemented partially. Use /config commands for now if this fails.');
-        }
-
-        // Status Logic
-        async function updateStatus() {
-            try {
-                const res = await fetch('/api/status');
-                const data = await res.json();
-                document.getElementById('sb-rssi').textContent = data.rssi;
-                document.getElementById('sb-heap').textContent = Math.round(data.heap_free / 1024);
-                document.getElementById('st-rssi').textContent = data.rssi + ' dBm';
-                document.getElementById('st-heap').textContent = Math.round(data.heap_free / 1024) + ' KB';
-                document.getElementById('st-uptime').textContent = formatUptime(data.uptime);
-                document.getElementById('st-provider').textContent = data.model_provider;
-            } catch (e) { }
-        }
-
-        function formatUptime(sec) {
-            const h = Math.floor(sec / 3600);
-            const m = Math.floor((sec % 3600) / 60);
-            return `${h}h ${m}m`;
-        }
-
-        // Init
-        setInterval(updateStatus, 5000);
-        updateStatus();
-        loadChatHistory();
-        // Poll chat history every 3s
-        setInterval(loadChatHistory, 3000);
-        loadConfig();
-
     </script>
 </body>
 

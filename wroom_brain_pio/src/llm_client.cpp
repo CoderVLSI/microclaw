@@ -1,5 +1,7 @@
 #include "llm_client.h"
 
+#include "agent_loop.h"
+
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
@@ -20,7 +22,10 @@ static const char *kPlanSystemPrompt =
     "Use numbered steps. Include risks and quick validation checks.";
 static const char *kChatSystemPrompt =
     "You are a concise, practical assistant running on an ESP32 bot over Telegram. "
-    "Be helpful, clear, and brief by default.";
+    "Be helpful, clear, and brief by default.\n"
+    "TOOLS:\n"
+    "- If you generate HTML/website code, you MUST deploy it by outputting: host_file <filename> <content>\n"
+    "- Example: host_file index.html <!DOCTYPE html>...";
 static const char *kHeartbeatSystemPrompt =
     "You are running an autonomous heartbeat check for an ESP32 Telegram agent. "
     "Read the heartbeat instructions and return a short operational update in 3 bullets: "
@@ -794,6 +799,25 @@ bool llm_generate_reply(const String &message, String &reply_out, String &error_
     if (history.length() > 0) {
       task = "Recent conversation (last 15-30 turns):\n" + history + "\n\nCurrent user message:\n" + message;
     }
+  }
+  // Include last generated file for iteration (short-term memory)
+  // MOVED: Append to system prompt to avoid "User sent this" hallucination
+  String last_file_content = agent_loop_get_last_file_content();
+  if (last_file_content.length() > 0) {
+    String last_file_name = agent_loop_get_last_file_name();
+    if (last_file_name.length() == 0) last_file_name = "generated_code.txt";
+    
+    // Truncate to 4500 chars to prevent 429 errors (Rate Limit)
+    if (last_file_content.length() > 4500) {
+      last_file_content = last_file_content.substring(0, 4500) + "\n...(truncated)";
+    }
+    
+    // Explicitly label as SYSTEM MEMORY
+    system_prompt += "\n\n=== SYSTEM MEMORY (Code you previously generated) ===\n"
+                     "FILENAME: " + last_file_name + "\n"
+                     "CONTENT:\n```\n" + last_file_content + "\n```\n"
+                     "You can edit this code if requested. Provide full updated code.\n"
+                     "==========================================================\n";
   }
 
   bool result = llm_generate_with_custom_prompt(system_prompt, task, true, reply_out, error_out);

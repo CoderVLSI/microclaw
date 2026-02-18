@@ -2298,6 +2298,32 @@ bool tool_registry_execute(const String &input, String &out) {
     return true;
   }
 
+  if (cmd_lc.startsWith("host_file ")) {
+    String tail = cmd.substring(10);
+    tail.trim();
+    int sp = tail.indexOf(' ');
+    String filename = "index.html";
+    String content = tail;
+    if (sp > 0) {
+      filename = tail.substring(0, sp);
+      content = tail.substring(sp + 1);
+    }
+    content.trim();
+    filename.trim();
+    
+    // Unescape content if needed (simple check)
+    if (content.startsWith("\"") && content.endsWith("\"")) {
+      content = content.substring(1, content.length() - 1);
+      content.replace("\\n", "\n");
+      content.replace("\\\"", "\"");
+    }
+
+    web_server_publish_file(filename, content, "text/html");
+    String ip = WiFi.localIP().toString();
+    out = "File hosted: http://" + ip + "/" + filename;
+    return true;
+  }
+
   if (cmd_lc == "web_files_make" || cmd_lc.startsWith("web_files_make ")) {
     String topic = cmd.length() > 14 ? cmd.substring(14) : "";
     topic = sanitize_web_topic(topic);
@@ -2327,12 +2353,31 @@ bool tool_registry_execute(const String &input, String &out) {
       cmd_lc.indexOf("deploy it") >= 0 ||
       (cmd_lc.indexOf("host") >= 0 && cmd_lc.indexOf("server") >= 0)) {
     String last_resp = agent_loop_get_last_response();
+    String file_content = agent_loop_get_last_file_content();
+    String file_name = agent_loop_get_last_file_name();
+
+    // Priority 1: Use exact file memory if available
+    if (file_content.length() > 0) {
+      if (file_name.length() == 0) file_name = "index.html";
+      
+      // If filename is not html/js/css, default to index.html for hosting
+      if (!file_name.endsWith(".html") && !file_name.endsWith(".htm") && 
+          !file_name.endsWith(".js") && !file_name.endsWith(".css")) {
+         file_name = "index.html"; 
+      }
+      
+      web_server_publish_file(file_name, file_content, "text/html");
+      String ip = WiFi.localIP().toString();
+      out = "Website hosted on ESP32 (from memory)!\nAccess it at: http://" + ip + "/" + file_name;
+      return true;
+    }
+
     if (last_resp.length() == 0) {
       out = "No previous response to host. Ask me to create something first!";
       return true;
     }
 
-    // Try to extract HTML from code blocks
+    // Priority 2: Try to extract HTML from code blocks
     String html_content = "";
     int start = last_resp.indexOf("```html");
     if (start >= 0) {

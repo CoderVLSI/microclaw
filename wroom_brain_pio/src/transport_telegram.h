@@ -17,4 +17,8 @@ bool transport_telegram_get_last_document_base64(String &filename_out, String &m
                                                  String &base64_out, String &error_out);
 bool transport_telegram_send_photo_base64(const String &base64_data, const String &caption);
 
+// Streaming support
+String transport_telegram_send_streaming_start(const String &initial_msg);
+bool transport_telegram_send_streaming_edit(const String &message_id, const String &new_text);
+
 #endif

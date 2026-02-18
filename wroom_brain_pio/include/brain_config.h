@@ -60,7 +60,7 @@
 #endif
 
 #ifndef LLM_TIMEOUT_MS
-#define LLM_TIMEOUT_MS 25000
+#define LLM_TIMEOUT_MS 60000
 #endif
 
 // Image generation provider (separate from chat LLM)

@@ -3,9 +3,32 @@
 #include <Arduino.h>
 #include <SPIFFS.h>
 
+#if ENABLE_SD_CARD
+#include <SD.h>
+#include <SPI.h>
+#endif
+
 #include "brain_config.h"
 
 namespace {
+
+// File backend type
+enum class FileBackend {
+  NONE,
+  SPIFFS,
+  SD_CARD
+};
+
+FileBackend g_backend = FileBackend::NONE;
+bool g_backend_ready = false;
+
+#if ENABLE_SD_CARD
+// SD card configuration - common ESP32 pinout
+#define SD_CS 5
+#define SD_MOSI 23
+#define SD_MISO 19
+#define SD_SCK 18
+#endif
 
 // File paths
 const char *kMemoryDir = "/memory";
@@ -23,21 +46,88 @@ const size_t kMaxDailyMemory = 4096;
 const size_t kMaxSoulSize = 2048;
 const size_t kMaxSessionMsgs = 20;
 
+// Wrapper functions for filesystem operations
+bool fs_exists(const char *path) {
+#if ENABLE_SD_CARD
+  if (g_backend == FileBackend::SD_CARD) {
+    return SD.exists(path);
+  }
+#endif
+  return SPIFFS.exists(path);
+}
+
+bool fs_mkdir(const char *path) {
+#if ENABLE_SD_CARD
+  if (g_backend == FileBackend::SD_CARD) {
+    return SD.mkdir(path);
+  }
+#endif
+  return SPIFFS.mkdir(path);
+}
+
+bool fs_remove(const char *path) {
+#if ENABLE_SD_CARD
+  if (g_backend == FileBackend::SD_CARD) {
+    return SD.remove(path);
+  }
+#endif
+  return SPIFFS.remove(path);
+}
+
+fs::File fs_open(const char *path, const char *mode) {
+#if ENABLE_SD_CARD
+  if (g_backend == FileBackend::SD_CARD) {
+    return SD.open(path, mode);
+  }
+#endif
+  return SPIFFS.open(path, mode);
+}
+
+uint64_t fs_used_bytes() {
+#if ENABLE_SD_CARD
+  if (g_backend == FileBackend::SD_CARD) {
+    // SD card doesn't have a simple usedBytes() function
+    // Return 0 and show card size instead
+    return SD.cardSize() > 0 ? (SD.cardSize() - SD.totalBytes()) : 0;
+  }
+#endif
+  return SPIFFS.usedBytes();
+}
+
+uint64_t fs_total_bytes() {
+#if ENABLE_SD_CARD
+  if (g_backend == FileBackend::SD_CARD) {
+    uint64_t cardSize = SD.cardSize();
+    return cardSize > 0 ? cardSize : 0;
+  }
+#endif
+  return SPIFFS.totalBytes();
+}
+
+String fs_backend_name() {
+#if ENABLE_SD_CARD
+  if (g_backend == FileBackend::SD_CARD) {
+    return "SD Card";
+  }
+#endif
+  return "SPIFFS";
+}
+
 bool ensure_directories() {
-  if (!SPIFFS.exists(kMemoryDir)) {
-    if (!SPIFFS.mkdir(kMemoryDir)) {
+  if (!fs_exists(kMemoryDir)) {
+    if (!fs_mkdir(kMemoryDir)) {
       Serial.println("[file_memory] Failed to create /memory directory");
       return false;
     }
   }
-  if (!SPIFFS.exists(kConfigDir)) {
-    if (!SPIFFS.mkdir(kConfigDir)) {
+  if (!fs_exists(kConfigDir)) {
+    if (!fs_mkdir(kConfigDir)) {
       Serial.println("[file_memory] Failed to create /config directory");
       return false;
     }
   }
-  if (!SPIFFS.exists(kSessionsDir)) {
-    if (!SPIFFS.mkdir(kSessionsDir)) {
+  if (!fs_exists(kSessionsDir)) {
+    if (!fs_mkdir(kSessionsDir)) {
       Serial.println("[file_memory] Failed to create /sessions directory");
       return false;
     }
@@ -54,11 +144,30 @@ String get_daily_path() {
 }  // namespace
 
 void file_memory_init() {
-  if (!SPIFFS.begin(true)) {
-    Serial.println("[file_memory] SPIFFS mount failed");
-    return;
+  // Try SD card first if enabled
+#if ENABLE_SD_CARD
+  Serial.println("[file_memory] Trying SD card...");
+  SPI.begin();
+  if (SD.begin(SD_CS, SPI)) {
+    g_backend = FileBackend::SD_CARD;
+    g_backend_ready = true;
+    Serial.println("[file_memory] SD card mounted! 🎉");
+    Serial.printf("[file_memory] SD size: %llu MB\n", SD.cardSize() / (1024 * 1024));
+  } else {
+    Serial.println("[file_memory] SD card not found, using SPIFFS");
   }
-  Serial.println("[file_memory] SPIFFS mounted");
+#endif
+
+  // Fall back to SPIFFS
+  if (g_backend == FileBackend::NONE) {
+    if (!SPIFFS.begin(true)) {
+      Serial.println("[file_memory] SPIFFS mount failed");
+      return;
+    }
+    g_backend = FileBackend::SPIFFS;
+    g_backend_ready = true;
+    Serial.println("[file_memory] SPIFFS mounted");
+  }
 
   if (!ensure_directories()) {
     Serial.println("[file_memory] Directory creation failed");
@@ -66,8 +175,8 @@ void file_memory_init() {
   }
 
   // Create default files if they don't exist
-  if (!SPIFFS.exists(kLongTermMemoryPath)) {
-    File f = SPIFFS.open(kLongTermMemoryPath, FILE_WRITE);
+  if (!fs_exists(kLongTermMemoryPath)) {
+    fs::File f = fs_open(kLongTermMemoryPath, FILE_WRITE);
     if (f) {
       f.println("# Timi's Long-term Memory 🦖");
       f.println();
@@ -78,8 +187,8 @@ void file_memory_init() {
     }
   }
 
-  if (!SPIFFS.exists(kSoulPath)) {
-    File f = SPIFFS.open(kSoulPath, FILE_WRITE);
+  if (!fs_exists(kSoulPath)) {
+    fs::File f = fs_open(kSoulPath, FILE_WRITE);
     if (f) {
       f.println("# Timi's Soul 🦖");
       f.println();
@@ -92,8 +201,8 @@ void file_memory_init() {
     }
   }
 
-  if (!SPIFFS.exists(kUserPath)) {
-    File f = SPIFFS.open(kUserPath, FILE_WRITE);
+  if (!fs_exists(kUserPath)) {
+    fs::File f = fs_open(kUserPath, FILE_WRITE);
     if (f) {
       f.println("# User Profile");
       f.println();
@@ -108,16 +217,21 @@ void file_memory_init() {
     }
   }
 
-  Serial.println("[file_memory] Ready 🦖");
+  Serial.printf("[file_memory] Ready 🦖 (using %s)\n", fs_backend_name().c_str());
 }
 
 bool file_memory_read_long_term(String &content_out, String &error_out) {
-  if (!SPIFFS.exists(kLongTermMemoryPath)) {
+  if (!g_backend_ready) {
+    error_out = "Filesystem not ready";
+    return false;
+  }
+
+  if (!fs_exists(kLongTermMemoryPath)) {
     content_out = "";
     return true;
   }
 
-  File f = SPIFFS.open(kLongTermMemoryPath, FILE_READ);
+  fs::File f = fs_open(kLongTermMemoryPath, FILE_READ);
   if (!f) {
     error_out = "Failed to open MEMORY.md";
     return false;
@@ -129,6 +243,11 @@ bool file_memory_read_long_term(String &content_out, String &error_out) {
 }
 
 bool file_memory_append_long_term(const String &text, String &error_out) {
+  if (!g_backend_ready) {
+    error_out = "Filesystem not ready";
+    return false;
+  }
+
   // Read existing content
   String existing;
   if (!file_memory_read_long_term(existing, error_out)) {
@@ -136,7 +255,7 @@ bool file_memory_append_long_term(const String &text, String &error_out) {
   }
 
   // Append new content
-  File f = SPIFFS.open(kLongTermMemoryPath, FILE_WRITE);
+  fs::File f = fs_open(kLongTermMemoryPath, FILE_WRITE);
   if (!f) {
     error_out = "Failed to open MEMORY.md for writing";
     return false;
@@ -161,12 +280,17 @@ bool file_memory_append_long_term(const String &text, String &error_out) {
 }
 
 bool file_memory_read_soul(String &soul_out, String &error_out) {
-  if (!SPIFFS.exists(kSoulPath)) {
+  if (!g_backend_ready) {
+    error_out = "Filesystem not ready";
+    return false;
+  }
+
+  if (!fs_exists(kSoulPath)) {
     soul_out = "";
     return true;
   }
 
-  File f = SPIFFS.open(kSoulPath, FILE_READ);
+  fs::File f = fs_open(kSoulPath, FILE_READ);
   if (!f) {
     error_out = "Failed to open SOUL.md";
     return false;
@@ -178,7 +302,12 @@ bool file_memory_read_soul(String &soul_out, String &error_out) {
 }
 
 bool file_memory_write_soul(const String &soul, String &error_out) {
-  File f = SPIFFS.open(kSoulPath, FILE_WRITE);
+  if (!g_backend_ready) {
+    error_out = "Filesystem not ready";
+    return false;
+  }
+
+  fs::File f = fs_open(kSoulPath, FILE_WRITE);
   if (!f) {
     error_out = "Failed to open SOUL.md for writing";
     return false;
@@ -196,12 +325,17 @@ bool file_memory_write_soul(const String &soul, String &error_out) {
 }
 
 bool file_memory_read_user(String &user_out, String &error_out) {
-  if (!SPIFFS.exists(kUserPath)) {
+  if (!g_backend_ready) {
+    error_out = "Filesystem not ready";
+    return false;
+  }
+
+  if (!fs_exists(kUserPath)) {
     user_out = "";
     return true;
   }
 
-  File f = SPIFFS.open(kUserPath, FILE_READ);
+  fs::File f = fs_open(kUserPath, FILE_READ);
   if (!f) {
     error_out = "Failed to open USER.md";
     return false;
@@ -213,18 +347,23 @@ bool file_memory_read_user(String &user_out, String &error_out) {
 }
 
 bool file_memory_append_daily(const String &note, String &error_out) {
+  if (!g_backend_ready) {
+    error_out = "Filesystem not ready";
+    return false;
+  }
+
   String path = get_daily_path();
 
   String existing;
-  if (SPIFFS.exists(path)) {
-    File f = SPIFFS.open(path, FILE_READ);
+  if (fs_exists(path.c_str())) {
+    fs::File f = fs_open(path.c_str(), FILE_READ);
     if (f) {
       existing = f.readString();
       f.close();
     }
   }
 
-  File f = SPIFFS.open(path, FILE_WRITE);
+  fs::File f = fs_open(path.c_str(), FILE_WRITE);
   if (!f) {
     error_out = "Failed to open daily memory file";
     return false;
@@ -248,16 +387,21 @@ bool file_memory_append_daily(const String &note, String &error_out) {
 }
 
 bool file_memory_read_recent(String &content_out, int days, String &error_out) {
+  if (!g_backend_ready) {
+    error_out = "Filesystem not ready";
+    return false;
+  }
+
   // For simplicity, just return today's file
   // A full implementation would read multiple daily files
   String path = get_daily_path();
 
-  if (!SPIFFS.exists(path)) {
+  if (!fs_exists(path.c_str())) {
     content_out = "";
     return true;
   }
 
-  File f = SPIFFS.open(path, FILE_READ);
+  fs::File f = fs_open(path.c_str(), FILE_READ);
   if (!f) {
     error_out = "Failed to open daily memory file";
     return false;
@@ -270,13 +414,18 @@ bool file_memory_read_recent(String &content_out, int days, String &error_out) {
 
 bool file_memory_session_append(const String &chat_id, const String &role,
                                 const String &content, String &error_out) {
+  if (!g_backend_ready) {
+    error_out = "Filesystem not ready";
+    return false;
+  }
+
   String path = String(kSessionsDir) + "/tg_" + chat_id + ".jsonl";
 
   // Read existing lines to count
   int line_count = 0;
   String existing;
-  if (SPIFFS.exists(path)) {
-    File f = SPIFFS.open(path, FILE_READ);
+  if (fs_exists(path.c_str())) {
+    fs::File f = fs_open(path.c_str(), FILE_READ);
     if (f) {
       existing = f.readString();
       f.close();
@@ -291,7 +440,7 @@ bool file_memory_session_append(const String &chat_id, const String &role,
   // Create new JSON line
   String json_line = "{\"role\":\"" + role + "\",\"content\":\"" + content + "\"}";
 
-  File f = SPIFFS.open(path, FILE_WRITE);
+  fs::File f = fs_open(path.c_str(), FILE_WRITE);
   if (!f) {
     error_out = "Failed to open session file";
     return false;
@@ -316,14 +465,19 @@ bool file_memory_session_append(const String &chat_id, const String &role,
 
 bool file_memory_session_get(const String &chat_id, String &history_out,
                              String &error_out) {
+  if (!g_backend_ready) {
+    error_out = "Filesystem not ready";
+    return false;
+  }
+
   String path = String(kSessionsDir) + "/tg_" + chat_id + ".jsonl";
 
-  if (!SPIFFS.exists(path)) {
+  if (!fs_exists(path.c_str())) {
     history_out = "";
     return true;
   }
 
-  File f = SPIFFS.open(path, FILE_READ);
+  fs::File f = fs_open(path.c_str(), FILE_READ);
   if (!f) {
     error_out = "Failed to open session file";
     return false;
@@ -335,10 +489,15 @@ bool file_memory_session_get(const String &chat_id, String &history_out,
 }
 
 bool file_memory_session_clear(const String &chat_id, String &error_out) {
+  if (!g_backend_ready) {
+    error_out = "Filesystem not ready";
+    return false;
+  }
+
   String path = String(kSessionsDir) + "/tg_" + chat_id + ".jsonl";
 
-  if (SPIFFS.exists(path)) {
-    if (!SPIFFS.remove(path)) {
+  if (fs_exists(path.c_str())) {
+    if (!fs_remove(path.c_str())) {
       error_out = "Failed to remove session file";
       return false;
     }
@@ -348,11 +507,16 @@ bool file_memory_session_clear(const String &chat_id, String &error_out) {
 }
 
 bool file_memory_get_info(String &info_out, String &error_out) {
-  info_out = "🦖 Timi's Memory:\n\n";
+  if (!g_backend_ready) {
+    error_out = "Filesystem not ready";
+    return false;
+  }
+
+  info_out = "🦖 Timi's Memory (" + fs_backend_name() + "):\n\n";
 
   // Long-term memory size
-  if (SPIFFS.exists(kLongTermMemoryPath)) {
-    File f = SPIFFS.open(kLongTermMemoryPath, FILE_READ);
+  if (fs_exists(kLongTermMemoryPath)) {
+    fs::File f = fs_open(kLongTermMemoryPath, FILE_READ);
     if (f) {
       size_t size = f.size();
       info_out += "📚 Long-term: " + String(size) + " bytes\n";
@@ -361,8 +525,8 @@ bool file_memory_get_info(String &info_out, String &error_out) {
   }
 
   // Soul size
-  if (SPIFFS.exists(kSoulPath)) {
-    File f = SPIFFS.open(kSoulPath, FILE_READ);
+  if (fs_exists(kSoulPath)) {
+    fs::File f = fs_open(kSoulPath, FILE_READ);
     if (f) {
       size_t size = f.size();
       info_out += "🦖 Soul: " + String(size) + " bytes\n";
@@ -371,8 +535,8 @@ bool file_memory_get_info(String &info_out, String &error_out) {
   }
 
   // User profile size
-  if (SPIFFS.exists(kUserPath)) {
-    File f = SPIFFS.open(kUserPath, FILE_READ);
+  if (fs_exists(kUserPath)) {
+    fs::File f = fs_open(kUserPath, FILE_READ);
     if (f) {
       size_t size = f.size();
       info_out += "👤 User: " + String(size) + " bytes\n";
@@ -380,10 +544,21 @@ bool file_memory_get_info(String &info_out, String &error_out) {
     }
   }
 
-  // Total SPIFFS usage
-  info_out += "\n💾 SPIFFS: ";
-  info_out += String(SPIFFS.usedBytes()) + " / ";
-  info_out += String(SPIFFS.totalBytes()) + " bytes used";
+  // Total filesystem usage
+  uint64_t used = fs_used_bytes();
+  uint64_t total = fs_total_bytes();
+
+  info_out += "\n💾 ";
+  info_out += fs_backend_name();
+  info_out += ": ";
+
+  if (g_backend == FileBackend::SD_CARD) {
+    info_out += String(used / (1024 * 1024)) + " MB used";
+    info_out += " / " + String(total / (1024 * 1024)) + " MB total";
+  } else {
+    info_out += String(used) + " / ";
+    info_out += String(total) + " bytes used";
+  }
 
   return true;
 }

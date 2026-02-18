@@ -23,6 +23,9 @@
 
 // Store last LLM response for emailing code
 static String s_last_llm_response = "";
+// Store last generated code file for hosting/iteration
+static String s_last_generated_code = "";
+static String s_last_generated_filename = "";
 
 // Agent Task Logic
 struct AgentTaskMsg {
@@ -58,6 +61,19 @@ String agent_loop_get_last_response() {
 
 void agent_loop_set_last_response(const String &response) {
   s_last_llm_response = response;
+}
+
+String agent_loop_get_last_file_content() {
+  return s_last_generated_code;
+}
+
+String agent_loop_get_last_file_name() {
+  return s_last_generated_filename;
+}
+
+void agent_loop_set_last_file(const String &name, const String &content) {
+  s_last_generated_filename = name;
+  s_last_generated_code = content;
 }
 
 static bool is_internal_dispatch_message(const String &msg) {
@@ -290,6 +306,8 @@ static int extract_and_send_code_blocks(const String &response) {
         // Send as document
         if (transport_telegram_send_document(filename, code_content, mime, "Here's the code file:")) {
           files_sent++;
+          // Save valid file to memory for hosting/iteration
+          agent_loop_set_last_file(filename, code_content);
           Serial.printf("[agent] Code file sent successfully!\n");
         } else {
           Serial.printf("[agent] Failed to send code file\n");

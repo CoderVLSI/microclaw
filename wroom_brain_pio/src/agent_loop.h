@@ -10,6 +10,16 @@ void agent_loop_tick();
 String agent_loop_get_last_response();
 void agent_loop_set_last_response(const String &response);
 
+// Get/set the last generated code file (for hosting)
+String agent_loop_get_last_file_content();
+String agent_loop_get_last_file_name();
+void agent_loop_set_last_file(const String &name, const String &content);
+
+// Get/set the last generated code file (for hosting)
+String agent_loop_get_last_file_content();
+String agent_loop_get_last_file_name();
+void agent_loop_set_last_file(const String &name, const String &content);
+
 // Process a message from any source (Web/Telegram) and return the reply
 String agent_loop_process_message(const String &msg);
 
