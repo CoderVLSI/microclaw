@@ -10,4 +10,7 @@ void agent_loop_tick();
 String agent_loop_get_last_response();
 void agent_loop_set_last_response(const String &response);
 
+// Process a message from any source (Web/Telegram) and return the reply
+String agent_loop_process_message(const String &msg);
+
 #endif

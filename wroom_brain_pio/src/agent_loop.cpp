@@ -377,32 +377,36 @@ static void send_and_record(const String &incoming, const String &outgoing) {
   }
 }
 
-static void on_incoming_message(const String &msg) {
+String agent_loop_process_message(const String &msg) {
   if (msg.length() == 0) {
-    return;
+    return "";
   }
 
-  class BusyScope {
-   public:
-    BusyScope() { status_led_set_busy(true); }
-    ~BusyScope() { status_led_set_busy(false); }
-  } busy_scope;
+  status_led_set_busy(true);
 
-  Serial.print("[agent] incoming: ");
+  Serial.print("[agent] processing: ");
   Serial.println(msg);
   event_log_append("IN: " + msg);
 
   String response;
-  if (!tool_registry_execute(msg, response)) {
+  bool handled = false;
+
+  // 1. Direct Tool Execution
+  if (tool_registry_execute(msg, response)) {
+    handled = true;
+  } 
+  else {
     String trimmed = msg;
     trimmed.trim();
 
+    // 2. Deny unknown slash commands
     if (trimmed.startsWith("/")) {
-      send_and_record(msg, "Denied or unknown command");
-      return;
+      response = "Denied or unknown command";
+      handled = true;
     }
-
-    if (should_try_route(trimmed)) {
+    
+    // 3. Router (if not handled)
+    if (!handled && should_try_route(trimmed)) {
       String routed_command;
       String route_err;
       if (llm_route_tool_command(trimmed, routed_command, route_err)) {
@@ -414,48 +418,59 @@ static void on_incoming_message(const String &msg) {
               routed_response = routed_response.substring(0, 1400) + "...";
             }
             event_log_append("ROUTE: " + routed_command);
-            send_and_record(msg, routed_response);
-            return;
+            response = routed_response;
+            handled = true;
           }
         }
       }
     }
 
-    // Try ReAct agent for complex multi-step reasoning
-    if (react_agent_should_use(trimmed)) {
+    // 4. ReAct Agent (if not handled)
+    if (!handled && react_agent_should_use(trimmed)) {
       String react_response, react_error;
       event_log_append("ReAct: Starting agent loop");
       if (react_agent_run(trimmed, react_response, react_error)) {
-        // Store the full response for potential email_code command
         s_last_llm_response = react_response;
-
         if (react_response.length() > 1400) {
           react_response = react_response.substring(0, 1400) + "...";
         }
-        send_and_record(msg, react_response);
-        return;
+        response = react_response;
+        handled = true;
+      } else {
+        Serial.println("[ReAct] Failed: " + react_error);
       }
-      // If ReAct fails, fall through to normal LLM
-      Serial.println("[ReAct] Failed: " + react_error);
     }
 
-    String err;
-    if (!llm_generate_reply(trimmed, response, err)) {
-      send_and_record(msg, "ERR: " + err);
-      return;
+    // 5. Direct LLM Chat (if not handled)
+    if (!handled) {
+      String err;
+      if (llm_generate_reply(trimmed, response, err)) {
+        s_last_llm_response = response;
+        if (response.length() > 1400) {
+          response = response.substring(0, 1400) + "...";
+        }
+        handled = true;
+      } else {
+        response = "ERR: " + err;
+        handled = true;
+      }
     }
-
-    // Store the full response for potential email_code command
-    s_last_llm_response = response;
-
-    if (response.length() > 1400) {
-      response = response.substring(0, 1400) + "...";
-    }
-    send_and_record(msg, response);
-    return;
   }
 
-  send_and_record(msg, response);
+  status_led_set_busy(false);
+
+  // Record history
+  record_chat_turn(msg, response);
+  
+  return response;
+}
+
+static void on_incoming_message(const String &msg) {
+  String reply = agent_loop_process_message(msg);
+  if (reply.length() > 0) {
+    // Send to Telegram (do NOT record again)
+    transport_telegram_send(reply);
+  }
 }
 
 void agent_loop_init() {
