@@ -1234,7 +1234,7 @@ bool llm_understand_media(const String &instruction, const String &mime_type,
         String gemini_key = model_config_get_api_key("gemini");
         if (gemini_key.length() > 0) {
             String gemini_model = model_config_get_model("gemini");
-            if (gemini_model.length() == 0) gemini_model = "gemini-1.5-flash"; // Default to 1.5-flash
+            if (gemini_model.length() == 0) gemini_model = "gemini-2.5-flash"; // Default to 2.5-flash (GA June 2025)
 
             Serial.printf("[llm] Switching to Gemini provider: %s\n", gemini_model.c_str());
             
