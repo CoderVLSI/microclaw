@@ -164,6 +164,14 @@
 #define WEB_SEARCH_BASE_URL "https://api.search.brave.com"
 #endif
 
+#ifndef TAVILY_API_KEY
+#define TAVILY_API_KEY ""
+#endif
+
+#ifndef TAVILY_BASE_URL
+#define TAVILY_BASE_URL "https://api.tavily.com"
+#endif
+
 #ifndef WEB_SEARCH_TIMEOUT_MS
 #define WEB_SEARCH_TIMEOUT_MS 12000
 #endif

@@ -1,4 +1,5 @@
 #include "tool_registry.h"
+#include "tool_web.h"
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -3320,6 +3321,31 @@ bool tool_registry_execute(const String &input, String &out) {
     return true;
   }
 #endif
+
+  // Web Tools
+  if (cmd_lc.startsWith("search ") || cmd_lc.startsWith("web_search ")) {
+    String query = cmd.substring(cmd_lc.indexOf(' ') + 1);
+    query.trim();
+    if (query.length() == 0) {
+      out = "ERR: usage search <query>";
+      return true;
+    }
+    return tool_web_search(query, out);
+  }
+
+  if (cmd_lc.startsWith("weather ") || cmd_lc.startsWith("check weather ")) {
+    String loc = cmd.substring(cmd_lc.indexOf(' ') + 1);
+    loc.trim();
+    if (loc.length() == 0) {
+      out = "ERR: usage weather <location>";
+      return true;
+    }
+    return tool_web_weather(loc, out);
+  }
+
+  if (cmd_lc == "time" || cmd_lc == "what time is it" || cmd_lc == "current time") {
+    return tool_web_time(out);
+  }
 
   return false;
 }

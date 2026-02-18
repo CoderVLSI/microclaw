@@ -26,9 +26,14 @@ static const char *kHeartbeatSystemPrompt =
     "Read the heartbeat instructions and return a short operational update in 3 bullets: "
     "health, risk, next action.";
 static const char *kRouteSystemPrompt =
-    "Route user text to one tool command if obvious. "
-    "Return exactly one line only: TOOL: <command> or NONE. "
-    "No explanation, no markdown.";
+    "Route user text to one tool command if obvious.\n"
+    "Tools:\n"
+    "- search <query>: Web search (Brave/Tavily)\n"
+    "- weather <location>: Get weather\n"
+    "- time: Get current time\n"
+    "- generate_image <prompt>: Create image\n"
+    "- web_files_make <topic>: Create website\n"
+    "Return exactly one line only: TOOL: <command> or NONE. No markdown.";
 
 struct HttpResult {
   int status_code;
