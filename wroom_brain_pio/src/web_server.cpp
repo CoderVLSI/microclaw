@@ -58,7 +58,7 @@ void handle_api_config_get(AsyncWebServerRequest *request) {
   
   // Return masked keys for display
   String providers[] = {"openai", "anthropic", "gemini", "tavily", "brave"};
-  JsonObject keys = doc.createNestedObject("api_keys");
+  JsonObject keys = doc["api_keys"].to<JsonObject>();
   
   for (const String &p : providers) {
     String key = model_config_get_api_key(p);
@@ -71,7 +71,7 @@ void handle_api_config_get(AsyncWebServerRequest *request) {
     }
   }
   
-  JsonObject models = doc.createNestedObject("models");
+  JsonObject models = doc["models"].to<JsonObject>();
   for (const String &p : providers) {
       models[p] = model_config_get_model(p);
   }
@@ -149,23 +149,12 @@ void handle_api_chat_send(AsyncWebServerRequest *request, uint8_t *data, size_t 
     return;
   }
   
-  // Send to agent loop (async)
-  // We can't interactively wait for reply easily here without blocking.
-  // Ideally, we post the message, and polling /api/chat gets the update.
-  
-  String response_out; // Immediate response if any (Command?)
-  // For now, we inject into agent loop.
-  // agent_loop_process_message is intended for Telegram polling loop.
-  // But we can call it. It might be blocking?
-  // agent_loop_process_message calls LLM which is blocking.
-  // This will block the Web Server thread? AsyncWebServer is async but handlers run in callbacks.
-  // Blocking here might timeout the request.
-  // But for now, simple implementation: block.
-  
-  String reply = agent_loop_process_message(String(msg));
+  // Send to agent loop (async queue)
+  // Non-blocking to avoid WDT reset on AsyncWebServer thread
+  agent_loop_queue_message(String(msg));
   
   JsonDocument resDoc;
-  resDoc["reply"] = reply;
+  resDoc["status"] = "queued";
   send_json(request, resDoc);
 }
 

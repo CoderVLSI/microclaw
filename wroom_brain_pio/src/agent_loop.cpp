@@ -1,6 +1,8 @@
 #include "agent_loop.h"
 
 #include <Arduino.h>
+#include <vector>
+#include <freertos/semphr.h>
 
 #include "brain_config.h"
 #include "scheduler.h"
@@ -21,6 +23,10 @@
 
 // Store last LLM response for emailing code
 static String s_last_llm_response = "";
+
+// Web Message Queue
+static std::vector<String> s_web_message_queue;
+static SemaphoreHandle_t s_web_queue_mutex = NULL;
 
 String agent_loop_get_last_response() {
   return s_last_llm_response;
@@ -74,12 +80,16 @@ static bool should_try_route(const String &msg) {
   return false;
 }
 
-static void record_chat_turn(const String &incoming, const String &outgoing) {
+static void record_user_msg(const String &incoming) {
   if (is_internal_dispatch_message(incoming)) {
     return;
   }
   String err;
   chat_history_append('U', incoming, err);
+}
+
+static void record_bot_msg(const String &outgoing) {
+  String err;
   chat_history_append('A', outgoing, err);
 }
 
@@ -327,14 +337,11 @@ static bool looks_like_code(const String &text) {
   return false;
 }
 
-static void send_and_record(const String &incoming, const String &outgoing) {
+static void send_reply_via_telegram(const String &outgoing) {
   event_log_append("OUT: " + outgoing);
 
   // Check if response contains code blocks
-  bool has_code_blocks = false;
   int code_count = 0;
-
-  // Count code blocks
   for (int i = 0; i < (int)outgoing.length() - 2; i++) {
     if (outgoing[i] == '`' && outgoing[i+1] == '`' && outgoing[i+2] == '`') {
       code_count++;
@@ -344,17 +351,13 @@ static void send_and_record(const String &incoming, const String &outgoing) {
   // If we have code blocks (even pairs of ```), send them as files
   if (code_count >= 2) {
     int sent = extract_and_send_code_blocks(outgoing);
-
     if (sent > 0) {
-      // Also send a summary message
       String summary = "🦖 I've sent " + String(sent) + " code file(s)! Check above.";
       send_streaming(summary);
     } else {
-      // Code blocks found but extraction failed, send normally
       send_streaming(outgoing);
     }
   } else if (looks_like_code(outgoing) && outgoing.length() > 100) {
-    // No ``` blocks but looks like code - detect language for proper extension
     String detected = detect_language_from_content(outgoing);
     String ext = "txt";
     if (detected == "html" || detected == "html_full") ext = "html";
@@ -371,7 +374,6 @@ static void send_and_record(const String &incoming, const String &outgoing) {
     send_streaming(outgoing);
   }
 
-  record_chat_turn(incoming, outgoing);
   if (outgoing.startsWith("ERR:")) {
     status_led_notify_error();
   }
@@ -459,21 +461,41 @@ String agent_loop_process_message(const String &msg) {
 
   status_led_set_busy(false);
 
-  // Record history
-  record_chat_turn(msg, response);
+  status_led_set_busy(false);
+
+  // Record history (Bot only, User recorded at ingress)
+  record_bot_msg(response);
   
   return response;
 }
 
 static void on_incoming_message(const String &msg) {
+  record_user_msg(msg);
   String reply = agent_loop_process_message(msg);
   if (reply.length() > 0) {
     // Send to Telegram (do NOT record again)
-    transport_telegram_send(reply);
+    send_reply_via_telegram(reply);
+  }
+}
+
+void agent_loop_queue_message(const String &msg) {
+  if (msg.length() == 0) return;
+  
+  // Record User Msg immediately so UI sees it
+  record_user_msg(msg);
+
+  if (!s_web_queue_mutex) return;
+
+  if (xSemaphoreTake(s_web_queue_mutex, pdMS_TO_TICKS(100))) {
+    s_web_message_queue.push_back(msg);
+    xSemaphoreGive(s_web_queue_mutex);
+  } else {
+    Serial.println("[agent] failed to queue message (mutex timeout)");
   }
 }
 
 void agent_loop_init() {
+  s_web_queue_mutex = xSemaphoreCreateMutex();
   event_log_init();
   chat_history_init();
   memory_init();
@@ -505,4 +527,19 @@ void agent_loop_tick() {
   status_led_tick();
   transport_telegram_poll(on_incoming_message);
   scheduler_tick(on_incoming_message);
+
+  // Process Web Queue
+  String pending_msg = "";
+  if (s_web_queue_mutex && xSemaphoreTake(s_web_queue_mutex, 0)) {
+    if (!s_web_message_queue.empty()) {
+      pending_msg = s_web_message_queue.front();
+      s_web_message_queue.erase(s_web_message_queue.begin());
+    }
+    xSemaphoreGive(s_web_queue_mutex);
+  }
+
+  if (pending_msg.length() > 0) {
+    // Process message (blocking is fine in main loop)
+    agent_loop_process_message(pending_msg);
+  }
 }
