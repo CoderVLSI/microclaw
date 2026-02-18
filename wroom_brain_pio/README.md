@@ -18,9 +18,17 @@ The first high-performance, autonomous agent framework for microcontrollers. Har
   - `remember <note>` (persist note in on-device memory)
   - `memory` (show saved notes)
   - `forget` (clear saved notes)
-- Sends replies back to Telegram.
-- Supports Telegram slash commands (`/status`, `/plan`, etc.).
-- Autonomous periodic status is disabled by default.
+  - `search <query>` (Tavily/DDG web search)
+  - `time` (Get current time/date)
+- **Web Dashboard**:
+  - Accessible at `http://<ESP32-IP>/`.
+  - Chat interface with history.
+  - Configuration management (API Keys, Models).
+  - Real-time system status (Heap, WiFi, Uptime).
+- **Robust Architecture**:
+  - Agent logic runs in a dedicated FreeRTOS Task (16KB stack) to prevent WDT resets and stack overflows.
+  - Asynchronous message queueing for high concurrency.
+- **OTA Updates**: Supports firmware updates via `pio run -t upload`.
 
 ## Setup
 
@@ -48,12 +56,12 @@ copy .env.example .env
    - `WEB_SEARCH_API_KEY=...` (required for Tavily)
    - `WEB_SEARCH_BASE_URL=https://api.tavily.com`
    - if backend URL is empty, firmware uses provider flow: `tavily -> ddg fallback`
-8. Build and flash:
+8. Build and flash Firmware AND Filesystem (for Dashboard):
 
 ```powershell
-pio run
-pio run -t upload --upload-port COMx
-pio device monitor -b 115200 -p COMx
+pio run -t upload
+pio run -t uploadfs
+pio device monitor -b 115200
 ```
 
 ## Notes
@@ -69,3 +77,5 @@ pio device monitor -b 115200 -p COMx
   - Gemini: `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
   - GLM (Z.ai coding plan): `https://api.z.ai/api/coding/paas/v4`
 - Memory is persisted in NVS and is injected into `/plan` context.
+- **Dashboard**: The web dashboard is a Single Page Application (SPA) served from SPIFFS.
+
