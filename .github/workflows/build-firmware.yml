@@ -33,6 +33,17 @@ jobs:
         pip install platformio
         platformio update
 
+    - name: Create dummy .env for build
+      run: |
+        cd wroom_brain_pio
+        cat > .env << 'ENV_EOF'
+        WIFI_SSID=dummy
+        WIFI_PASS=dummy
+        TELEGRAM_BOT_TOKEN=dummy
+        TELEGRAM_ALLOWED_CHAT_ID=123
+        LLM_PROVIDER=none
+        ENV_EOF
+
     - name: Build Firmware
       run: |
         cd wroom_brain_pio
