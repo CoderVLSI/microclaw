@@ -1044,26 +1044,6 @@ bool llm_route_tool_command(const String &message, String &command_out, String &
   String lc = message;
   lc.toLowerCase();
 
-  // Web generation keywords - route directly to web_files_make
-  if (lc.indexOf("make a website") >= 0 || lc.indexOf("make me a website") >= 0 ||
-      lc.indexOf("create a website") >= 0 || lc.indexOf("generate a website") >= 0 ||
-      lc.indexOf("build a website") >= 0 || lc.indexOf("create html") >= 0 ||
-      lc.indexOf("generate html") >= 0) {
-    // Extract the topic after the keyword
-    String topic = "custom";
-    if (lc.indexOf("hello world") >= 0) {
-      topic = "hello world";
-    } else if (lc.indexOf("portfolio") >= 0) {
-      topic = "portfolio";
-    } else if (lc.indexOf("saas") >= 0 || lc.indexOf("saas") >= 0) {
-      topic = "saas";
-    } else if (lc.indexOf("landing page") >= 0) {
-      topic = "landing page";
-    }
-    command_out = "web_files_make " + topic;
-    return true;
-  }
-
   String task = "User message:\n" + message + "\n\nReturn one line only.";
   String raw;
   if (!llm_generate_with_custom_prompt(String(kRouteSystemPrompt), task, false, raw, error_out)) {

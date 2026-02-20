@@ -2407,12 +2407,6 @@ bool tool_registry_execute(const String &input, String &out) {
     return true;
   }
 
-  if (cmd_lc == "web_files_make" || cmd_lc.startsWith("web_files_make ")) {
-    String topic = cmd.length() > 14 ? cmd.substring(14) : "";
-    topic = sanitize_web_topic(topic);
-    return send_small_web_files(topic, out);
-  }
-
 #if ENABLE_EMAIL
   if (cmd_lc.startsWith("email_files ") || cmd_lc.startsWith("email_files  ")) {
     String remaining = cmd.substring(cmd.indexOf(' ') + 1);

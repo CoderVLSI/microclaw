@@ -512,8 +512,18 @@ String agent_loop_process_message(const String &msg) {
         while (true) {
           int open_tick = response.indexOf('`', start_idx);
           if (open_tick < 0) break;
+          
+          // Ignore triple backticks (code blocks)
+          if (open_tick + 2 < response.length() && response[open_tick+1] == '`' && response[open_tick+2] == '`') {
+            start_idx = open_tick + 3;
+            continue;
+          }
+
           int close_tick = response.indexOf('`', open_tick + 1);
-          if (close_tick < 0) break;
+          if (close_tick < 0) {
+            start_idx = open_tick + 1;
+            continue;
+          }
           
           String embedded_cmd = response.substring(open_tick + 1, close_tick);
           embedded_cmd.trim();
@@ -523,10 +533,12 @@ String agent_loop_process_message(const String &msg) {
             if (tool_registry_execute(embedded_cmd, tool_res)) {
               event_log_append("EMBEDDED tool: " + embedded_cmd);
               Serial.println("[agent] Executed embedded tool: " + embedded_cmd);
-              response += "\n\n(OK: " + tool_res + ")";
             }
           }
-          start_idx = close_tick + 1;
+          
+          // Remove the backticked command so the user doesn't see it
+          response = response.substring(0, open_tick) + response.substring(close_tick + 1);
+          // start_idx stays the same because the string shrank around it
         }
 
         if (response.length() > 1400) {
