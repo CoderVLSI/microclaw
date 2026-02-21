@@ -2439,6 +2439,8 @@ static String code_fence_language_from_filename(const String &filename) {
   return "text";
 }
 
+static bool extract_html_from_response_text(const String &response, String &html_out);
+
 static bool resolve_web_iteration_target_path(const String &input, String &path_out,
                                               String &error_out) {
   String explicit_path;
@@ -2454,9 +2456,54 @@ static bool resolve_web_iteration_target_path(const String &input, String &path_
     return true;
   }
 
+  // Fallback: if the last generated website only exists in memory (e.g. code_123.html),
+  // materialize it into /projects/active so natural follow-up edits can work.
+  String last_content = agent_loop_get_last_file_content();
+  String last_resp = agent_loop_get_last_response();
+  String content_to_write = last_content;
+  String name_lc = last_name;
+  name_lc.toLowerCase();
+
+  bool has_web_memory =
+      (last_name.length() > 0 && is_web_asset_filename(last_name) && content_to_write.length() > 0);
+  if (!has_web_memory) {
+    String extracted_html;
+    if (extract_html_from_response_text(last_resp, extracted_html) && extracted_html.length() > 0) {
+      content_to_write = extracted_html;
+      last_name = "index.html";
+      name_lc = "index.html";
+      has_web_memory = true;
+    }
+  }
+
+  if (has_web_memory) {
+    String target_path = "/projects/active/index.html";
+    if (name_lc.endsWith(".css")) {
+      target_path = "/projects/active/styles.css";
+    } else if (name_lc.endsWith(".js")) {
+      target_path = "/projects/active/script.js";
+    } else if (!name_lc.endsWith(".html") && !name_lc.endsWith(".htm")) {
+      if (looks_like_css_payload(content_to_write)) {
+        target_path = "/projects/active/styles.css";
+      } else if (looks_like_js_payload(content_to_write)) {
+        target_path = "/projects/active/script.js";
+      } else {
+        target_path = "/projects/active/index.html";
+      }
+    }
+
+    String write_err;
+    if (file_memory_write_file(target_path, content_to_write, write_err)) {
+      agent_loop_set_last_file(target_path, content_to_write);
+      path_out = target_path;
+      return true;
+    }
+  }
+
   error_out =
       "No active /projects file to update.\n"
-      "Say it like: update /projects/<name>/index.html and make it better.";
+      "Say it like: update /projects/<name>/index.html and make it better.\n"
+      "Or first ask: create a website and host it.";
   return false;
 }
 
