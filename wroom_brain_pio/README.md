@@ -1,62 +1,43 @@
-![TimiClaw Banner](repo-banner.png)
+# TimiClaw Firmware (ESP32 + PlatformIO)
+<p align="center">
+  <img src="../assets/timiclaw-banner.png" alt="TimiClaw banner" width="920" />
+</p>
 
-# TimiClaw (Metal Core)
+`wroom_brain_pio` is the main firmware for TimiClaw. It runs an ESP32 Telegram AI agent with allowlisted tools, optional multi-provider LLM chat, file generation, and an onboard web dashboard.
 
-The first high-performance, autonomous agent framework for microcontrollers. Hard real-time, zero OS overhead, ultra-secure.
+## What Is Working Now
 
-## What this does now
+- Telegram command and chat handling on ESP32
+- Optional LLM providers: `gemini`, `openai`, `anthropic`, `glm`, `openrouter`, `ollama`
+- Natural-language routing to internal tools
+- Robust code/file delivery to Telegram (with retry)
+- Web file generation and hosting from ESP32 storage
+- Natural web iteration for existing files in `/projects/...`
+- First-time onboarding (6 steps):
+  - timezone
+  - provider
+  - key setup
+  - user nickname
+  - bot name
+  - bot purpose
+- Context reset command (`fresh_start`) that keeps `/projects`
+- Web dashboard at `http://<ESP32-IP>/`
 
-- Runs a local agent loop on ESP32.
-- Accepts Telegram text commands.
-- Executes strict allowlisted tools only:
-  - `status`
-  - `relay_set <pin> <0|1>`
-  - `sensor_read <pin>`
-  - `plan <task>` (optional LLM-powered coding plan)
-  - `webjob_set_daily <HH:MM> <task>` (schedule backend-driven web task)
-  - `webjob_show`, `webjob_run`, `webjob_clear`
-  - `remember <note>` (persist note in on-device memory)
-  - `memory` (show saved notes)
-  - `forget` (clear saved notes)
-  - `search <query>` (Tavily/DDG web search)
-  - `time` (Get current time/date)
-- **Web Dashboard**:
-  - Accessible at `http://<ESP32-IP>/`.
-  - Chat interface with history.
-  - Configuration management (API Keys, Models).
-  - Real-time system status (Heap, WiFi, Uptime).
-- **Robust Architecture**:
-  - Agent logic runs in a dedicated FreeRTOS Task (16KB stack) to prevent WDT resets and stack overflows.
-  - Asynchronous message queueing for high concurrency.
-- **OTA Updates**: Supports firmware updates via `pio run -t upload`.
+## Quick Start
 
-## Setup
-
-1. Install PlatformIO (VS Code extension or CLI).
-2. Open this folder in PlatformIO.
-3. Create a local `.env` file from the example:
+1. Create local env file:
 
 ```powershell
 copy .env.example .env
 ```
 
-4. Edit `.env` with Wi-Fi + Telegram bot token + allowed chat id.
-5. Optional: enable LLM provider for `plan` command:
-   - `LLM_PROVIDER=openai|anthropic|gemini|glm`
-   - `LLM_API_KEY=...`
-   - `LLM_MODEL=...` (provider-specific)
-   - adjust base URL variables if needed
-6. Optional: configure a backend endpoint for scheduled web jobs:
-   - `WEB_JOB_ENDPOINT_URL=https://your-server.example`
-   - `WEB_JOB_API_KEY=...` (optional)
-   - endpoint expected: `POST /run_job` with JSON payload `{"task","timezone","device"}`
-   - response should return one of: `reply`, `result`, `text`, or `content`
-7. Optional: direct on-device web search provider (no backend):
-   - `WEB_SEARCH_PROVIDER=auto|tavily|ddg`
-   - `WEB_SEARCH_API_KEY=...` (required for Tavily)
-   - `WEB_SEARCH_BASE_URL=https://api.tavily.com`
-   - if backend URL is empty, firmware uses provider flow: `tavily -> ddg fallback`
-8. Build and flash Firmware AND Filesystem (for Dashboard):
+2. Fill required values in `.env`:
+- `WIFI_SSID`
+- `WIFI_PASS`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_ALLOWED_CHAT_ID`
+
+3. Build, flash, and upload filesystem:
 
 ```powershell
 pio run -t upload
@@ -64,18 +45,85 @@ pio run -t uploadfs
 pio device monitor -b 115200
 ```
 
-## Notes
+## Natural Website Workflow (Recommended)
 
-- TLS currently uses `client.setInsecure()` for quick bring-up. Replace with pinned cert/CA before production.
-- Telegram parser is intentionally small and conservative for RAM limits.
-- This is a WROOM-safe baseline, not full OpenClaw parity.
-- `.env` is ignored via `.gitignore`.
-- Build step generates `include/brain_secrets.generated.h` from `.env` via `scripts/load_env.py`.
-- Provider endpoint defaults:
-  - OpenAI: `https://api.openai.com/v1/chat/completions`
-  - Anthropic: `https://api.anthropic.com/v1/messages`
-  - Gemini: `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
-  - GLM (Z.ai coding plan): `https://api.z.ai/api/coding/paas/v4`
-- Memory is persisted in NVS and is injected into `/plan` context.
-- **Dashboard**: The web dashboard is a Single Page Application (SPA) served from SPIFFS.
+Use natural prompts, but include a target path when editing existing files.
 
+Examples:
+- `create a saas landing page and send files`
+- `update /projects/saas_template/index.html and make it red`
+- `make /projects/saas_template/index.html more stunning`
+- `host it`
+- `list projects`
+
+Behavior:
+- New generation sends files as Telegram documents.
+- Iteration updates the same file path when you specify `/projects/...`.
+- `host it` prefers HTML entrypoints and avoids serving raw `.js` as page root.
+
+## Onboarding
+
+- First message (`/start`) triggers setup if onboarding is incomplete.
+- Commands:
+  - `onboarding_start`
+  - `onboarding_status`
+  - `onboarding_skip`
+
+Identity choices from onboarding are saved into on-device profile memory (`USER.md` and `SOUL.md` profile block).
+
+## Core Commands
+
+- `/start`, `/help`, `/status`, `/health`, `/specs`, `/usage`
+- `/timezone_set <zone>`, `/timezone_show`
+- `/model list`, `/model status`, `/model use <provider>`, `/model set <provider> <key>`
+- `/web_files_make [topic]`, `host it`
+- `/fresh_start` (clear conversation context, keep `/projects`)
+- `/memory`, `/remember <note>`, `/forget`
+- `/skills`, `/skill_show <name>`, `/skill_add ...`, `/use_skill ...`
+- `/minos <cmd>`
+
+Hardware and utility commands:
+- `/relay_set <pin> <0|1>`
+- `/flash_led [count]`
+- `/search <query>`
+- `/logs`, `/logs_clear`
+- `/cron_add <expr> | <cmd>`, `/cron_list`, `/cron_clear`
+
+## Configuration Notes
+
+- Env values are compiled into firmware via `scripts/load_env.py` -> `include/brain_secrets.generated.h`.
+- Gemini default endpoint should be:
+  - `https://generativelanguage.googleapis.com`
+- For image generation:
+  - set `IMAGE_PROVIDER` and `IMAGE_API_KEY`
+  - if unset, firmware can fall back to `LLM_PROVIDER`/`LLM_API_KEY` for compatible providers
+
+## Troubleshooting
+
+Bot does not reply:
+- Verify `TELEGRAM_ALLOWED_CHAT_ID` by calling Bot API `getUpdates`.
+- Confirm Wi-Fi and token are valid.
+- Confirm bot was flashed after env changes.
+
+`ERR: Could not parse provider response`:
+- Usually provider payload mismatch or old firmware build.
+- Rebuild and reflash latest firmware.
+
+`ERR: LLM HTTP -1`:
+- Transport timeout/network/TLS failure.
+- Check Wi-Fi quality, endpoint URL, key validity, and provider rate limits.
+
+Upload issues:
+- Hold `BOOT` while upload starts if needed.
+- Close any serial monitor locking the COM port.
+
+## Security
+
+- Current TLS uses insecure mode for development (`setInsecure`).
+- Keep `.env` private and never commit real tokens.
+- Restrict bot access with `TELEGRAM_ALLOWED_CHAT_ID`.
+
+## Project Scope
+
+This folder is the active production firmware target.
+The sibling `wroom_brain` ESP-IDF project is a secondary scaffold.

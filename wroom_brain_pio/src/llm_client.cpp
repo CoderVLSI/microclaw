@@ -129,6 +129,26 @@ String join_url(const String &base, const String &path) {
   return base + path;
 }
 
+String trim_with_ellipsis(const String &value, size_t max_chars) {
+  if (value.length() <= max_chars) {
+    return value;
+  }
+  if (max_chars < 16) {
+    return value.substring(0, max_chars);
+  }
+  return value.substring(0, max_chars) + "\n...(truncated)";
+}
+
+String keep_tail_with_marker(const String &value, size_t max_chars) {
+  if (value.length() <= max_chars) {
+    return value;
+  }
+  if (max_chars < 16) {
+    return value.substring(value.length() - max_chars);
+  }
+  return String("...(truncated)\n") + value.substring(value.length() - max_chars);
+}
+
 String json_escape(const String &src) {
   String out;
   out.reserve(src.length() + 32);
@@ -255,37 +275,51 @@ HttpResult http_post_json(const String &url, const String &body,
     return result;
   }
 
-  WiFiClientSecure client;
-  client.setInsecure();
+  const int kMaxAttempts = 2;
+  for (int attempt = 0; attempt < kMaxAttempts; attempt++) {
+    WiFiClientSecure client;
+    client.setInsecure();
 
-  HTTPClient https;
-  if (!https.begin(client, url)) {
-    result.error = "HTTP begin failed";
-    return result;
-  }
+    HTTPClient https;
+    if (!https.begin(client, url)) {
+      result.error = "HTTP begin failed";
+      if (attempt + 1 < kMaxAttempts) {
+        delay(220);
+        continue;
+      }
+      return result;
+    }
 
-  https.setConnectTimeout(12000);
-  https.setTimeout(LLM_TIMEOUT_MS);
-  https.addHeader("Content-Type", "application/json");
+    https.setConnectTimeout(12000);
+    https.setTimeout(LLM_TIMEOUT_MS);
+    https.addHeader("Content-Type", "application/json");
 
-  if (h1_name.length()) {
-    https.addHeader(h1_name, h1_value);
-  }
-  if (h2_name.length()) {
-    https.addHeader(h2_name, h2_value);
-  }
-  if (h3_name.length()) {
-    https.addHeader(h3_name, h3_value);
-  }
+    if (h1_name.length()) {
+      https.addHeader(h1_name, h1_value);
+    }
+    if (h2_name.length()) {
+      https.addHeader(h2_name, h2_value);
+    }
+    if (h3_name.length()) {
+      https.addHeader(h3_name, h3_value);
+    }
 
-  result.status_code = https.POST((uint8_t *)body.c_str(), body.length());
-  if (result.status_code > 0) {
-    result.body = https.getString();
-  } else {
+    result.status_code = https.POST((uint8_t *)body.c_str(), body.length());
+    if (result.status_code > 0) {
+      result.body = https.getString();
+      result.error = "";
+      https.end();
+      return result;
+    }
+
     result.error = https.errorToString(result.status_code);
+    https.end();
+
+    if (attempt + 1 < kMaxAttempts) {
+      delay(260 + (attempt * 120));
+    }
   }
 
-  https.end();
   return result;
 }
 
@@ -364,7 +398,7 @@ bool call_openai_like(const String &base_url, const String &api_key, const Strin
   const HttpResult res =
       http_post_json(url, body, "Authorization", "Bearer " + api_key);
   if (res.status_code < 200 || res.status_code >= 300) {
-    error_out = "LLM HTTP " + String(res.status_code);
+    error_out = summarize_http_error("LLM", res);
     return false;
   }
 
@@ -388,7 +422,7 @@ bool call_anthropic(const String &base_url, const String &api_key, const String 
   const HttpResult res = http_post_json(url, body, "x-api-key", api_key,
                                         "anthropic-version", "2023-06-01");
   if (res.status_code < 200 || res.status_code >= 300) {
-    error_out = "LLM HTTP " + String(res.status_code);
+    error_out = summarize_http_error("LLM", res);
     return false;
   }
 
@@ -411,7 +445,7 @@ bool call_gemini(const String &base_url, const String &api_key, const String &mo
 
   const HttpResult res = http_post_json(url, body);
   if (res.status_code < 200 || res.status_code >= 300) {
-    error_out = "LLM HTTP " + String(res.status_code);
+    error_out = summarize_http_error("LLM", res);
     return false;
   }
 
@@ -439,7 +473,7 @@ bool call_glm_zai(const String &endpoint_url, const String &api_key, const Strin
   const HttpResult res =
       http_post_json(url, body, "Authorization", "Bearer " + api_key);
   if (res.status_code < 200 || res.status_code >= 300) {
-    error_out = "LLM HTTP " + String(res.status_code);
+    error_out = summarize_http_error("LLM", res);
     return false;
   }
 
@@ -470,7 +504,7 @@ bool call_ollama(const String &base_url, const String &model,
   // Ollama doesn't use API key, pass empty string
   const HttpResult res = http_post_json(url, body);
   if (res.status_code < 200 || res.status_code >= 300) {
-    error_out = "Ollama HTTP " + String(res.status_code);
+    error_out = summarize_http_error("Ollama", res);
     return false;
   }
 
@@ -820,6 +854,15 @@ bool llm_generate_plan(const String &task, String &plan_out, String &error_out) 
 }
 
 bool llm_generate_reply(const String &message, String &reply_out, String &error_out) {
+  const size_t kLongUserMessageChars = 1400;
+  const size_t kMaxSkillChars = 700;
+  const size_t kMaxSoulChars = 420;
+  const size_t kMaxMemoryChars = 700;
+  const size_t kMaxHistoryChars = 1200;
+  const size_t kMaxLastFileChars = 1800;
+  const size_t kMaxTaskChars = 5200;
+
+  const bool long_user_message = message.length() > kLongUserMessageChars;
   String system_prompt = String(kChatSystemPrompt);
 
   system_prompt += "\n\nPROJECT FILE WORKFLOW (PREFER THIS FOR LONG CODING TASKS):\n"
@@ -846,7 +889,8 @@ bool llm_generate_reply(const String &message, String &reply_out, String &error_
 
   // Inject available skills so the agent knows what it can do
   String skill_descs = skill_get_descriptions_for_react();
-  if (skill_descs.length() > 0) {
+  if (skill_descs.length() > 0 && !long_user_message) {
+    skill_descs = trim_with_ellipsis(skill_descs, kMaxSkillChars);
     system_prompt += "\n\nAVAILABLE SKILLS:\n" + skill_descs +
                      "\nYou can activate any with: use_skill <name> [context]\n"
                       "You can also create new skills with: skill_add <name> <description>: <instructions>";
@@ -865,9 +909,7 @@ bool llm_generate_reply(const String &message, String &reply_out, String &error_
   if (file_memory_read_soul(soul_text, soul_err)) {
     soul_text.trim();
     if (soul_text.length() > 0) {
-      if (soul_text.length() > 600) {
-        soul_text = soul_text.substring(0, 600);
-      }
+      soul_text = trim_with_ellipsis(soul_text, kMaxSoulChars);
       system_prompt += "\n\nSOUL:\n" + soul_text;
     }
   }
@@ -878,14 +920,12 @@ bool llm_generate_reply(const String &message, String &reply_out, String &error_
   if (file_memory_read_long_term(memory_text, memory_err)) {
     memory_text.trim();
     if (memory_text.length() > 0) {
-      if (memory_text.length() > 800) {
-        memory_text = "...(truncated)\n" + memory_text.substring(memory_text.length() - 800);
-      }
+      memory_text = keep_tail_with_marker(memory_text, kMaxMemoryChars);
       system_prompt += "\n\nMEMORY (what you know about the user):\n" + memory_text;
     }
   }
 
-  String task = message;
+  String task = trim_with_ellipsis(message, kMaxTaskChars);
   String msg_lc = message;
   msg_lc.toLowerCase();
 
@@ -893,9 +933,10 @@ bool llm_generate_reply(const String &message, String &reply_out, String &error_
   // History is stored in NVS and persists across reboots
   String history;
   String history_err;
-  if (chat_history_get(history, history_err)) {
+  if (!long_user_message && chat_history_get(history, history_err)) {
     history.trim();
     if (history.length() > 0) {
+      history = keep_tail_with_marker(history, kMaxHistoryChars);
       task = "Recent conversation (last 15-30 turns):\n" + history + "\n\nCurrent user message:\n" + message;
     }
   }
@@ -903,14 +944,11 @@ bool llm_generate_reply(const String &message, String &reply_out, String &error_
   // Primary preference is project files in SPIFFS (/projects/...).
   // MOVED: Append to system prompt to avoid "User sent this" hallucination
   String last_file_content = agent_loop_get_last_file_content();
-  if (last_file_content.length() > 0) {
+  if (!long_user_message && last_file_content.length() > 0) {
     String last_file_name = agent_loop_get_last_file_name();
     if (last_file_name.length() == 0) last_file_name = "generated_code.txt";
     
-    // Truncate to 4500 chars to prevent 429 errors (Rate Limit)
-    if (last_file_content.length() > 4500) {
-      last_file_content = last_file_content.substring(0, 4500) + "\n...(truncated)";
-    }
+    last_file_content = trim_with_ellipsis(last_file_content, kMaxLastFileChars);
     
     // Explicitly label as SYSTEM MEMORY
     system_prompt += "\n\n=== SYSTEM MEMORY (Code you previously generated) ===\n"
@@ -920,7 +958,11 @@ bool llm_generate_reply(const String &message, String &reply_out, String &error_
                      "==========================================================\n";
   }
 
-  bool result = llm_generate_with_custom_prompt(system_prompt, task, true, reply_out, error_out);
+  if (task.length() > kMaxTaskChars) {
+    task = trim_with_ellipsis(task, kMaxTaskChars);
+  }
+
+  bool result = llm_generate_with_custom_prompt(system_prompt, task, false, reply_out, error_out);
 
   // Auto-save important info to MEMORY.md
   if (result) {

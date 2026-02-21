@@ -38,6 +38,16 @@ struct AgentTaskMsg {
 static QueueHandle_t s_agent_queue = NULL;
 
 static void send_reply_via_telegram(const String &outgoing);
+static bool send_document_with_retry(const String &filename, const String &content,
+                                     const String &mime_type, const String &caption) {
+  for (int attempt = 0; attempt < 3; attempt++) {
+    if (transport_telegram_send_document(filename, content, mime_type, caption)) {
+      return true;
+    }
+    delay(180 + (attempt * 120));
+  }
+  return false;
+}
 
 // MinOS Kernel Task
 static void minos_task_code(void *pvParameters) {
@@ -317,10 +327,12 @@ static int extract_and_send_code_blocks(const String &response) {
         Serial.printf("[agent] Sending code file: %s (%d bytes)\n", filename.c_str(), code_content.length());
 
         // Send as document
-        if (transport_telegram_send_document(filename, code_content, mime, "Here's the code file:")) {
+        if (send_document_with_retry(filename, code_content, mime, "Here's the code file:")) {
           files_sent++;
-          // Save valid file to memory for hosting/iteration
-          agent_loop_set_last_file(filename, code_content);
+          // Prefer HTML entrypoints for hosting. Fallback to first file.
+          if (ext == "html" || files_sent == 1) {
+            agent_loop_set_last_file(filename, code_content);
+          }
           Serial.printf("[agent] Code file sent successfully!\n");
         } else {
           Serial.printf("[agent] Failed to send code file\n");
@@ -342,7 +354,97 @@ static void send_streaming(const String &outgoing) {
   if (outgoing.length() == 0) {
     return;
   }
-  transport_telegram_send(outgoing);
+  const int kChunkMax = 3400;  // Telegram max is 4096 chars.
+  int start = 0;
+  while (start < (int)outgoing.length()) {
+    int end = start + kChunkMax;
+    if (end >= (int)outgoing.length()) {
+      transport_telegram_send(outgoing.substring(start));
+      break;
+    }
+
+    int split = -1;
+    for (int i = end; i >= start + (kChunkMax / 2); i--) {
+      if (outgoing[i] == '\n') {
+        split = i + 1;
+        break;
+      }
+    }
+    if (split < 0) {
+      split = end;
+    }
+
+    transport_telegram_send(outgoing.substring(start, split));
+    start = split;
+    delay(80);
+  }
+}
+
+static bool response_contains_code(const String &text) {
+  if (text.indexOf("```") >= 0) {
+    return true;
+  }
+  String lc = text;
+  lc.toLowerCase();
+  return (lc.indexOf("<html") >= 0) || (lc.indexOf("function ") >= 0) ||
+         (lc.indexOf("class ") >= 0) || (lc.indexOf("#include") >= 0) ||
+         (lc.indexOf("const ") >= 0 && lc.indexOf("=>") >= 0);
+}
+
+static bool extract_embedded_web_files_command(const String &text, String &cmd_out) {
+  cmd_out = "";
+
+  int pos = 0;
+  while (pos < (int)text.length()) {
+    int open = text.indexOf('`', pos);
+    if (open < 0) {
+      break;
+    }
+    if (open + 2 < (int)text.length() && text[open + 1] == '`' && text[open + 2] == '`') {
+      pos = open + 3;
+      continue;
+    }
+    int close = text.indexOf('`', open + 1);
+    if (close < 0) {
+      break;
+    }
+    String candidate = text.substring(open + 1, close);
+    candidate.trim();
+    if (candidate.startsWith("/")) {
+      candidate.remove(0, 1);
+    }
+
+    String lc = candidate;
+    lc.toLowerCase();
+    if (lc == "web_files_make") {
+      cmd_out = "web_files_make website";
+      return true;
+    }
+    if (lc.startsWith("web_files_make ")) {
+      cmd_out = candidate;
+      cmd_out.trim();
+      return cmd_out.length() > 15;
+    }
+    pos = close + 1;
+  }
+
+  String lc_text = text;
+  lc_text.toLowerCase();
+  int p = lc_text.indexOf("web_files_make ");
+  if (p >= 0) {
+    int end = p;
+    while (end < (int)text.length() && text[end] != '\n' && text[end] != '\r' &&
+           text[end] != '`') {
+      end++;
+    }
+    String candidate = text.substring(p, end);
+    candidate.trim();
+    if (candidate.length() > 15) {
+      cmd_out = candidate;
+      return true;
+    }
+  }
+  return false;
 }
 
 // Check if text looks like code (even without ``` blocks)
@@ -422,8 +524,13 @@ static void send_reply_via_telegram(const String &outgoing) {
     else if (detected == "c") ext = "c";
     else if (detected == "cpp") ext = "cpp";
     String filename = "code_" + String((unsigned long)millis()) + "." + ext;
-    transport_telegram_send_document(filename, outgoing, "text/plain", "Here's your code:");
-    send_streaming("🦖 I've sent the code as a file!");
+    bool sent_code_file =
+        send_document_with_retry(filename, outgoing, "text/plain", "Here's your code:");
+    if (sent_code_file) {
+      send_streaming("🦖 I've sent the code as a file!");
+    } else {
+      send_streaming("ERR: failed to send code file");
+    }
   } else {
     // No code blocks, send with streaming
     send_streaming(outgoing);
@@ -471,8 +578,8 @@ String agent_loop_process_message(const String &msg) {
         if (routed_command.length() > 0) {
           String routed_response;
           if (tool_registry_execute(routed_command, routed_response)) {
-            if (routed_response.length() > 1400) {
-              routed_response = routed_response.substring(0, 1400) + "...";
+            if (routed_response.length() > 3400 && !response_contains_code(routed_response)) {
+              routed_response = routed_response.substring(0, 3400) + "...";
             }
             event_log_append("ROUTE: " + routed_command);
             response = routed_response;
@@ -488,8 +595,8 @@ String agent_loop_process_message(const String &msg) {
       event_log_append("ReAct: Starting agent loop");
       if (react_agent_run(trimmed, react_response, react_error)) {
         s_last_llm_response = react_response;
-        if (react_response.length() > 1400) {
-          react_response = react_response.substring(0, 1400) + "...";
+        if (react_response.length() > 3400 && !response_contains_code(react_response)) {
+          react_response = react_response.substring(0, 3400) + "...";
         }
         response = react_response;
         handled = true;
@@ -502,10 +609,19 @@ String agent_loop_process_message(const String &msg) {
     if (!handled) {
       String err;
       if (llm_generate_reply(trimmed, response, err)) {
+        String hinted_cmd;
+        if (extract_embedded_web_files_command(response, hinted_cmd)) {
+          String hinted_out;
+          if (tool_registry_execute(hinted_cmd, hinted_out)) {
+            event_log_append("ROUTE: " + hinted_cmd + " (from model hint)");
+            response = hinted_out;
+          }
+        }
+
         s_last_llm_response = response;
 
-        if (response.length() > 1400) {
-          response = response.substring(0, 1400) + "...";
+        if (response.length() > 3400 && !response_contains_code(response)) {
+          response = response.substring(0, 3400) + "...";
         }
         handled = true;
 

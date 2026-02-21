@@ -105,6 +105,49 @@ void clear_pending_reminder_details() {
   s_pending_reminder_details.expires_ms = 0;
 }
 
+static bool clear_all_conversation_context(String &out) {
+  String warnings = "";
+  String err;
+
+  if (!chat_history_clear(err)) {
+    warnings += "- chat history: " + err + "\n";
+  }
+
+  if (!memory_clear_notes(err)) {
+    warnings += "- short-term memory: " + err + "\n";
+  }
+
+  // Clear long-term context files that are injected into prompts.
+  if (!file_memory_write_file("/memory/MEMORY.md", "", err)) {
+    warnings += "- MEMORY.md: " + err + "\n";
+  }
+  if (!file_memory_write_file("/memory/USER.md", "", err)) {
+    warnings += "- USER.md: " + err + "\n";
+  }
+
+  // Clear last generated code cache used as fallback context.
+  agent_loop_set_last_file("", "");
+  agent_loop_set_last_response("");
+
+  clear_pending();
+  clear_pending_reminder_tz();
+  clear_pending_reminder_details();
+
+  // Best-effort clear chat session file (if used).
+  file_memory_session_clear(String(TELEGRAM_ALLOWED_CHAT_ID), err);
+
+  if (warnings.length() > 0) {
+    out = "Context mostly cleared with warnings:\n" + warnings +
+          "Project files in /projects were kept.";
+    return true;
+  }
+
+  out = "OK: conversation context cleared.\n"
+        "Cleared: chat history, memory notes, MEMORY.md, USER.md, last code cache.\n"
+        "Kept: /projects files, SOUL.md, API keys, timezone, reminders.";
+  return true;
+}
+
 bool has_user_timezone() {
   String tz;
   String err;
@@ -178,6 +221,7 @@ bool relay_set_now(int pin, int state, String &out) {
 
 void build_help_text(String &out) {
   out += "🦖 Timi Commands:\n\n";
+  out += "/start - Welcome and setup status\n";
   out += "/status - Show system status\n";
   out += "/help - Show this help\n";
   out += "/health - Check health\n";
@@ -220,6 +264,10 @@ void build_help_text(String &out) {
   out += "/remember <note> - Remember something\n";
   out += "/memory - Show long-term memory\n";
   out += "/forget - Clear memory\n";
+  out += "/fresh_start - Clear conversation context (keep /projects)\n";
+  out += "/onboarding_start - Start/restart setup wizard\n";
+  out += "/onboarding_status - Show setup wizard status\n";
+  out += "/onboarding_skip - Skip setup wizard\n";
   out += "/model list - List available models\n";
   out += "/model status - Show current model\n";
   out += "/model use <provider> - Switch model provider\n";
@@ -279,7 +327,7 @@ void tool_registry_init() {
 #endif
       "safe_mode, logs, time_show, "
       "soul_show/soul_set/soul_clear, heartbeat_show/heartbeat_set/heartbeat_clear, "
-      "remember <note>, memory, forget, "
+      "remember <note>, memory, forget, fresh_start, onboarding_start/onboarding_status/onboarding_skip, "
 #if ENABLE_IMAGE_GEN
       "generate_image <prompt>, "
 #endif
@@ -379,6 +427,607 @@ static bool extract_timezone_from_text(const String &input, String &tz_out) {
   }
 
   return false;
+}
+
+static String onboarding_normalize_provider(String provider_raw) {
+  provider_raw.trim();
+  provider_raw.toLowerCase();
+  if (provider_raw == "google") {
+    return "gemini";
+  }
+  if (provider_raw == "claude") {
+    return "anthropic";
+  }
+  if (provider_raw == "openrouter.ai") {
+    return "openrouter";
+  }
+  if (provider_raw == "gpt" || provider_raw == "chatgpt") {
+    return "openai";
+  }
+  const char *providers[] = {"openai", "anthropic", "gemini", "glm", "openrouter", "ollama"};
+  for (size_t i = 0; i < (sizeof(providers) / sizeof(providers[0])); i++) {
+    if (provider_raw == providers[i]) {
+      return provider_raw;
+    }
+  }
+  return "";
+}
+
+static String onboarding_provider_prompt() {
+  return "Onboarding (2/6): choose your AI provider.\n"
+         "Reply with one: gemini, openai, anthropic, glm, openrouter, ollama\n"
+         "Or reply: skip";
+}
+
+static String onboarding_timezone_prompt() {
+  return "Onboarding (1/6): set your timezone.\n"
+         "Reply like: timezone_set Asia/Kolkata\n"
+         "Or reply with a city/zone: Asia/Kolkata\n"
+         "Or reply: skip";
+}
+
+static String onboarding_key_prompt_for(const String &provider) {
+  return "Onboarding (3/6): provider '" + provider + "' needs an API key.\n"
+         "Recommended (safe): set key in .env, flash firmware, then reply: done\n"
+         "Optional (less safe): model set " + provider + " <api_key>\n"
+         "You can also reply: skip";
+}
+
+static String onboarding_user_name_prompt() {
+  return "Onboarding (4/6): what should I call you?\n"
+         "Examples: call me Rahul, my name is Alex";
+}
+
+static String onboarding_bot_name_prompt() {
+  return "Onboarding (5/6): what should my name be?\n"
+         "Examples: your name is MicroClaw, call yourself Timi";
+}
+
+static String onboarding_purpose_prompt() {
+  return "Onboarding (6/6): what should be my core purpose?\n"
+         "Example: help me build websites and automate daily tasks on ESP32";
+}
+
+static String sanitize_onboarding_value(String value, size_t max_chars) {
+  value.trim();
+  while (value.length() >= 2 &&
+         ((value.startsWith("\"") && value.endsWith("\"")) ||
+          (value.startsWith("'") && value.endsWith("'")) ||
+          (value.startsWith("`") && value.endsWith("`")))) {
+    value = value.substring(1, value.length() - 1);
+    value.trim();
+  }
+  value = compact_spaces(value);
+  if (value.length() > max_chars) {
+    value = value.substring(0, max_chars);
+    value.trim();
+  }
+  return value;
+}
+
+static bool parse_user_name_choice(const String &cmd, const String &cmd_lc, String &name_out) {
+  if (cmd.startsWith("/")) {
+    return false;
+  }
+  String value = cmd;
+  if (cmd_lc.startsWith("call me ")) {
+    value = cmd.substring(8);
+  } else if (cmd_lc.startsWith("my name is ")) {
+    value = cmd.substring(11);
+  } else if (cmd_lc.startsWith("i am ")) {
+    value = cmd.substring(5);
+  } else if (cmd_lc.startsWith("name ")) {
+    value = cmd.substring(5);
+  }
+  value = sanitize_onboarding_value(value, 48);
+  if (value.length() < 2) {
+    return false;
+  }
+  name_out = value;
+  return true;
+}
+
+static bool parse_bot_name_choice(const String &cmd, const String &cmd_lc, String &name_out) {
+  if (cmd.startsWith("/")) {
+    return false;
+  }
+  String value = cmd;
+  if (cmd_lc.startsWith("your name is ")) {
+    value = cmd.substring(13);
+  } else if (cmd_lc.startsWith("call yourself ")) {
+    value = cmd.substring(14);
+  } else if (cmd_lc.startsWith("bot name ")) {
+    value = cmd.substring(9);
+  } else if (cmd_lc.startsWith("name ")) {
+    value = cmd.substring(5);
+  }
+  value = sanitize_onboarding_value(value, 48);
+  if (value.length() < 2) {
+    return false;
+  }
+  name_out = value;
+  return true;
+}
+
+static bool parse_purpose_choice(const String &cmd, const String &cmd_lc, String &purpose_out) {
+  if (cmd.startsWith("/")) {
+    return false;
+  }
+  String value = cmd;
+  if (cmd_lc.startsWith("purpose ")) {
+    value = cmd.substring(8);
+  } else if (cmd_lc.startsWith("you should ")) {
+    value = cmd.substring(11);
+  }
+  value = sanitize_onboarding_value(value, 180);
+  if (value.length() < 8) {
+    return false;
+  }
+  purpose_out = value;
+  return true;
+}
+
+static String upsert_profile_line(const String &existing, const String &prefix, const String &value) {
+  String out = "";
+  bool replaced = false;
+  int cursor = 0;
+  while (cursor < (int)existing.length()) {
+    int nl = existing.indexOf('\n', cursor);
+    if (nl < 0) {
+      nl = existing.length();
+    }
+    String line = existing.substring(cursor, nl);
+    cursor = nl + 1;
+    String line_lc = line;
+    String prefix_lc = prefix;
+    line_lc.trim();
+    line_lc.toLowerCase();
+    prefix_lc.toLowerCase();
+    if (line_lc.startsWith(prefix_lc)) {
+      out += prefix + value + "\n";
+      replaced = true;
+    } else if (line.length() > 0) {
+      out += line + "\n";
+    }
+  }
+  if (!replaced) {
+    out += prefix + value + "\n";
+  }
+  out.trim();
+  return out;
+}
+
+static bool onboarding_save_identity_profile(const String &user_name, const String &bot_name,
+                                             const String &purpose, String &error_out) {
+  String existing_user;
+  String err;
+  if (!file_memory_read_user(existing_user, err)) {
+    error_out = "Failed to read USER.md: " + err;
+    return false;
+  }
+  String updated_user = upsert_profile_line(existing_user, "Preferred name: ", user_name);
+  if (!file_memory_write_file("/memory/USER.md", updated_user, err)) {
+    error_out = "Failed to write USER.md: " + err;
+    return false;
+  }
+
+  String existing_soul;
+  if (!file_memory_read_soul(existing_soul, err)) {
+    existing_soul = "";
+  }
+  const String begin_marker = "[ONBOARD_PROFILE_BEGIN]";
+  const String end_marker = "[ONBOARD_PROFILE_END]";
+  int begin = existing_soul.indexOf(begin_marker);
+  if (begin >= 0) {
+    int end = existing_soul.indexOf(end_marker, begin);
+    if (end >= 0) {
+      end += end_marker.length();
+      existing_soul.remove(begin, end - begin);
+    } else {
+      existing_soul.remove(begin);
+    }
+  }
+  existing_soul.trim();
+
+  String block = begin_marker + "\n";
+  block += "Assistant name: " + bot_name + "\n";
+  block += "Call user as: " + user_name + "\n";
+  block += "Primary purpose: " + purpose + "\n";
+  block += end_marker;
+
+  String merged = existing_soul.length() > 0 ? (existing_soul + "\n\n" + block) : block;
+  if (!file_memory_write_soul(merged, err)) {
+    error_out = "Failed to write SOUL.md: " + err;
+    return false;
+  }
+  return true;
+}
+
+static bool parse_model_set_command(const String &cmd, const String &cmd_lc, String &provider_out,
+                                    String &api_key_out) {
+  if (!cmd_lc.startsWith("model set ") && !cmd_lc.startsWith("model_set ")) {
+    return false;
+  }
+  String tail = cmd.length() > 9 ? cmd.substring(9) : "";
+  tail.trim();
+  int first_space = tail.indexOf(' ');
+  if (first_space < 0) {
+    return false;
+  }
+  String provider = tail.substring(0, first_space);
+  String api_key = tail.substring(first_space + 1);
+  provider = onboarding_normalize_provider(provider);
+  api_key.trim();
+  if (provider.length() == 0 || api_key.length() == 0) {
+    return false;
+  }
+  provider_out = provider;
+  api_key_out = api_key;
+  return true;
+}
+
+static bool parse_onboarding_provider_choice(const String &cmd_lc, String &provider_out) {
+  String raw = cmd_lc;
+  raw.trim();
+
+  if (raw.startsWith("model use ")) {
+    raw = raw.substring(10);
+    raw.trim();
+  } else if (raw.startsWith("provider ")) {
+    raw = raw.substring(9);
+    raw.trim();
+  } else if (raw.startsWith("use ")) {
+    raw = raw.substring(4);
+    raw.trim();
+  }
+
+  String direct = onboarding_normalize_provider(raw);
+  if (direct.length() > 0) {
+    provider_out = direct;
+    return true;
+  }
+
+  const char *providers[] = {"gemini", "openai", "anthropic", "glm", "openrouter", "ollama"};
+  for (size_t i = 0; i < (sizeof(providers) / sizeof(providers[0])); i++) {
+    String p = String(providers[i]);
+    if (raw.indexOf(p) >= 0 && raw.length() <= 32) {
+      provider_out = p;
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool onboarding_has_existing_setup() {
+  String tz;
+  String err;
+  bool has_tz = false;
+  if (persona_get_timezone(tz, err)) {
+    tz.trim();
+    has_tz = tz.length() > 0;
+  }
+
+  String configured = model_config_get_configured_list();
+  configured.trim();
+  bool has_provider = configured.length() > 0 && configured != "(none configured)";
+  return has_tz || has_provider;
+}
+
+static bool onboarding_set_done_and_clear(bool done, String &out, const String &message) {
+  String err;
+  if (!persona_set_onboarding_done(done, err)) {
+    out = "ERR: failed to save onboarding state: " + err;
+    return true;
+  }
+  if (!persona_clear_onboarding_state(err)) {
+    out = "ERR: failed to clear onboarding state: " + err;
+    return true;
+  }
+  out = message;
+  return true;
+}
+
+static bool is_onboarding_passthrough_command(const String &cmd_lc) {
+  return cmd_lc == "help" || cmd_lc == "status" || cmd_lc == "health" ||
+         cmd_lc == "specs" || cmd_lc == "usage" || cmd_lc == "fresh_start";
+}
+
+static bool handle_onboarding_flow(const String &cmd, const String &cmd_lc, String &out) {
+  const bool telegram_start_cmd = (cmd_lc == "start" || cmd_lc.startsWith("start "));
+  const bool start_cmd =
+      (cmd_lc == "onboarding_start" || cmd_lc == "onboard_start" ||
+       cmd_lc == "onboarding_reset" || cmd_lc == "onboard");
+  const bool status_cmd = (cmd_lc == "onboarding_status" || cmd_lc == "onboard_status");
+  const bool skip_cmd = (cmd_lc == "onboarding_skip" || cmd_lc == "onboard_skip" ||
+                         cmd_lc == "skip onboarding");
+
+  if (start_cmd) {
+    String err;
+    if (!persona_set_onboarding_done(false, err) || !persona_set_onboarding_step("tz", err) ||
+        !persona_set_onboarding_provider("", err) ||
+        !persona_set_onboarding_user_name("", err) ||
+        !persona_set_onboarding_bot_name("", err) ||
+        !persona_set_onboarding_purpose("", err)) {
+      out = "ERR: failed to start onboarding: " + err;
+      return true;
+    }
+    out = "Onboarding restarted.\n\n" + onboarding_timezone_prompt();
+    return true;
+  }
+
+  bool done = false;
+  String err;
+  if (!persona_get_onboarding_done(done, err)) {
+    return false;  // fail open
+  }
+
+  String step;
+  if (!persona_get_onboarding_step(step, err)) {
+    step = "";
+  }
+  step.trim();
+  step.toLowerCase();
+
+  String selected_provider;
+  if (!persona_get_onboarding_provider(selected_provider, err)) {
+    selected_provider = "";
+  }
+  selected_provider = onboarding_normalize_provider(selected_provider);
+
+  String onboarding_user_name;
+  if (!persona_get_onboarding_user_name(onboarding_user_name, err)) {
+    onboarding_user_name = "";
+  }
+  onboarding_user_name = sanitize_onboarding_value(onboarding_user_name, 48);
+
+  String onboarding_bot_name;
+  if (!persona_get_onboarding_bot_name(onboarding_bot_name, err)) {
+    onboarding_bot_name = "";
+  }
+  onboarding_bot_name = sanitize_onboarding_value(onboarding_bot_name, 48);
+
+  String onboarding_purpose;
+  if (!persona_get_onboarding_purpose(onboarding_purpose, err)) {
+    onboarding_purpose = "";
+  }
+  onboarding_purpose = sanitize_onboarding_value(onboarding_purpose, 180);
+
+  if (!done && step.length() == 0 && onboarding_has_existing_setup()) {
+    if (!persona_set_onboarding_done(true, err)) {
+      return false;
+    }
+    done = true;
+  }
+
+  if (telegram_start_cmd) {
+    if (done) {
+      out = "Timi is ready.\nUse /help to see commands.\nUse onboarding_start to rerun setup.";
+      return true;
+    }
+    if (step.length() == 0) {
+      persona_set_onboarding_step("tz", err);
+      step = "tz";
+    }
+    out = "Welcome to Timi setup.\n\n";
+    if (step == "tz") {
+      out += onboarding_timezone_prompt();
+    } else if (step == "provider") {
+      out += onboarding_provider_prompt();
+    } else if (step == "key") {
+      out += onboarding_key_prompt_for(selected_provider.length() > 0 ? selected_provider : "provider");
+    } else if (step == "user_name") {
+      out += onboarding_user_name_prompt();
+    } else if (step == "bot_name") {
+      out += onboarding_bot_name_prompt();
+    } else if (step == "purpose") {
+      out += onboarding_purpose_prompt();
+    } else {
+      persona_set_onboarding_step("tz", err);
+      out += onboarding_timezone_prompt();
+    }
+    return true;
+  }
+
+  if (status_cmd) {
+    if (done) {
+      out = "Onboarding: complete";
+      return true;
+    }
+    if (step.length() == 0) {
+      step = "tz";
+    }
+    out = "Onboarding: in progress\nStep: " + step;
+    if (selected_provider.length() > 0) {
+      out += "\nProvider: " + selected_provider;
+    }
+    if (onboarding_user_name.length() > 0) {
+      out += "\nCall user: " + onboarding_user_name;
+    }
+    if (onboarding_bot_name.length() > 0) {
+      out += "\nBot name: " + onboarding_bot_name;
+    }
+    if (onboarding_purpose.length() > 0) {
+      out += "\nPurpose: " + onboarding_purpose;
+    }
+    out += "\nUse: onboarding_skip to bypass";
+    return true;
+  }
+
+  if (done) {
+    return false;
+  }
+
+  if (skip_cmd) {
+    return onboarding_set_done_and_clear(
+        true, out,
+        "Onboarding skipped.\nYou can run onboarding_start any time.");
+  }
+
+  if (is_onboarding_passthrough_command(cmd_lc)) {
+    return false;
+  }
+
+  if (step.length() == 0) {
+    String tz;
+    if (persona_get_timezone(tz, err)) {
+      tz.trim();
+      step = tz.length() > 0 ? "provider" : "tz";
+    } else {
+      step = "tz";
+    }
+    persona_set_onboarding_step(step, err);
+  }
+
+  if (step == "tz") {
+    String tz;
+    if (extract_timezone_from_text(cmd, tz)) {
+      if (!persona_set_timezone(tz, err)) {
+        out = "ERR: " + err;
+        return true;
+      }
+      persona_set_onboarding_step("provider", err);
+      out = "Timezone set to " + tz + "\n\n" + onboarding_provider_prompt();
+      return true;
+    }
+    if (cmd_lc == "skip" || cmd_lc == "use default" || cmd_lc == "default") {
+      if (!persona_set_timezone(String(TIMEZONE_TZ), err)) {
+        out = "ERR: " + err;
+        return true;
+      }
+      persona_set_onboarding_step("provider", err);
+      out = "Timezone set to default (" + String(TIMEZONE_TZ) + ")\n\n" +
+            onboarding_provider_prompt();
+      return true;
+    }
+    out = onboarding_timezone_prompt();
+    return true;
+  }
+
+  if (step == "provider") {
+    if (cmd_lc == "skip") {
+      persona_set_onboarding_provider("", err);
+      persona_set_onboarding_step("user_name", err);
+      out = "Provider skipped.\n\n" + onboarding_user_name_prompt();
+      return true;
+    }
+
+    String provider;
+    if (!parse_onboarding_provider_choice(cmd_lc, provider)) {
+      out = onboarding_provider_prompt();
+      return true;
+    }
+
+    persona_set_onboarding_provider(provider, err);
+    if (model_config_is_provider_configured(provider)) {
+      model_config_set_active_provider(provider, err);
+      persona_set_onboarding_step("user_name", err);
+      out = "Provider ready: " + provider + "\n\n" + onboarding_user_name_prompt();
+      return true;
+    }
+
+    persona_set_onboarding_step("key", err);
+    out = onboarding_key_prompt_for(provider);
+    return true;
+  }
+
+  if (step == "key") {
+    String provider = selected_provider;
+    if (provider.length() == 0) {
+      persona_set_onboarding_step("provider", err);
+      out = onboarding_provider_prompt();
+      return true;
+    }
+
+    if (cmd_lc == "skip" || cmd_lc == "skip key") {
+      persona_set_onboarding_step("user_name", err);
+      out = "API key skipped for now.\n\n" + onboarding_user_name_prompt();
+      return true;
+    }
+
+    String parsed_provider;
+    String parsed_key;
+    if (parse_model_set_command(cmd, cmd_lc, parsed_provider, parsed_key)) {
+      if (!model_config_set_api_key(parsed_provider, parsed_key, err)) {
+        out = "ERR: " + err;
+        return true;
+      }
+      model_config_set_active_provider(parsed_provider, err);
+      persona_set_onboarding_provider(parsed_provider, err);
+      persona_set_onboarding_step("user_name", err);
+      out = "Provider ready: " + parsed_provider + "\n\n" + onboarding_user_name_prompt();
+      return true;
+    }
+
+    if (cmd_lc == "done" || cmd_lc == "configured" || cmd_lc == "ready") {
+      if (model_config_is_provider_configured(provider)) {
+        model_config_set_active_provider(provider, err);
+        persona_set_onboarding_step("user_name", err);
+        out = "Provider ready: " + provider + "\n\n" + onboarding_user_name_prompt();
+        return true;
+      }
+      out = "I still don't see a key for " + provider + ".\n" + onboarding_key_prompt_for(provider);
+      return true;
+    }
+
+    out = onboarding_key_prompt_for(provider);
+    return true;
+  }
+
+  if (step == "user_name") {
+    String user_name;
+    if (!parse_user_name_choice(cmd, cmd_lc, user_name)) {
+      out = onboarding_user_name_prompt();
+      return true;
+    }
+    persona_set_onboarding_user_name(user_name, err);
+    persona_set_onboarding_step("bot_name", err);
+    out = "Nice to meet you, " + user_name + ".\n\n" + onboarding_bot_name_prompt();
+    return true;
+  }
+
+  if (step == "bot_name") {
+    String bot_name;
+    if (!parse_bot_name_choice(cmd, cmd_lc, bot_name)) {
+      out = onboarding_bot_name_prompt();
+      return true;
+    }
+    persona_set_onboarding_bot_name(bot_name, err);
+    persona_set_onboarding_step("purpose", err);
+    out = "Great. My name is now " + bot_name + ".\n\n" + onboarding_purpose_prompt();
+    return true;
+  }
+
+  if (step == "purpose") {
+    String purpose;
+    if (!parse_purpose_choice(cmd, cmd_lc, purpose)) {
+      out = onboarding_purpose_prompt();
+      return true;
+    }
+    persona_set_onboarding_purpose(purpose, err);
+
+    String user_name = onboarding_user_name.length() > 0 ? onboarding_user_name : String("friend");
+    String bot_name = onboarding_bot_name.length() > 0 ? onboarding_bot_name : String("Timi");
+    if (user_name.length() == 0) user_name = "friend";
+    if (bot_name.length() == 0) bot_name = "Timi";
+
+    String save_err;
+    if (!onboarding_save_identity_profile(user_name, bot_name, purpose, save_err)) {
+      out = "ERR: " + save_err;
+      return true;
+    }
+
+    return onboarding_set_done_and_clear(
+        true, out,
+        "Onboarding complete.\n"
+        "I will call you: " + user_name + "\n"
+        "My name: " + bot_name + "\n"
+        "Purpose: " + purpose + "\n"
+        "Try: make a simple website");
+  }
+
+  persona_set_onboarding_step("tz", err);
+  out = onboarding_timezone_prompt();
+  return true;
 }
 
 static bool parse_time_from_natural(const String &text_lc, int &hour24_out, int &minute_out) {
@@ -830,8 +1479,10 @@ static bool extract_web_files_topic_from_text(const String &input, String &topic
                         (lc.indexOf("webpage") >= 0) || (lc.indexOf("web page") >= 0);
   const bool has_css = (lc.indexOf("css") >= 0) || (lc.indexOf("style") >= 0);
   const bool has_js = (lc.indexOf("js") >= 0) || (lc.indexOf("javascript") >= 0);
+  const bool has_dashboard = (lc.indexOf("dashboard") >= 0);
   const bool has_site_words = (lc.indexOf("website") >= 0) || (lc.indexOf("web site") >= 0) ||
-                              (lc.indexOf("landing page") >= 0) || (lc.indexOf("saas") >= 0);
+                              (lc.indexOf("websit") >= 0) || (lc.indexOf("landing page") >= 0) ||
+                              (lc.indexOf("saas") >= 0) || has_dashboard;
   const bool has_style_words =
       (lc.indexOf("stunning") >= 0) || (lc.indexOf("modern") >= 0) ||
       (lc.indexOf("premium") >= 0) || (lc.indexOf("beautiful") >= 0) ||
@@ -844,7 +1495,7 @@ static bool extract_web_files_topic_from_text(const String &input, String &topic
       (has_html && (has_css || has_js || has_site_words || asks_file_delivery || has_style_words)) ||
       (has_site_words && (asks_file_delivery || has_style_words)) ||
       (has_style_words && (has_site_words || has_html));
-  if (!(asks_build && wants_web_files)) {
+  if (!(asks_build && (wants_web_files || has_site_words || has_dashboard))) {
     return false;
   }
 
@@ -856,6 +1507,8 @@ static bool extract_web_files_topic_from_text(const String &input, String &topic
   if (topic.length() == 0) {
     if (lc.indexOf("saas") >= 0) {
       topic = "saas website";
+    } else if (has_dashboard) {
+      topic = "dashboard";
     } else if (has_site_words && has_style_words) {
       topic = "stunning website";
     } else if (has_site_words) {
@@ -876,7 +1529,33 @@ static bool extract_web_files_topic_from_text(const String &input, String &topic
   topic.replace(" improved", "");
   topic.replace(" redesign", "");
   topic.replace(" website", "");
+  topic.replace(" websit", "");
+  topic.replace(" web site", "");
+  topic.replace(" webpage", "");
+  topic.replace(" web page", "");
+  topic.replace(" dashboard", "");
   topic = compact_spaces(topic);
+  if (topic.length() == 0) {
+    topic = lc;
+    topic.replace("make ", " ");
+    topic.replace("create ", " ");
+    topic.replace("build ", " ");
+    topic.replace("generate ", " ");
+    topic.replace("a ", " ");
+    topic.replace("an ", " ");
+    topic.replace("the ", " ");
+    topic.replace("website", " ");
+    topic.replace("websit", " ");
+    topic.replace("web page", " ");
+    topic.replace("webpage", " ");
+    topic.replace("html", " ");
+    topic.replace("css", " ");
+    topic.replace("javascript", " ");
+    topic.replace("js", " ");
+    topic.replace("files", " ");
+    topic.replace("file", " ");
+    topic = compact_spaces(topic);
+  }
   topic = sanitize_web_topic(topic);
   topic_out = topic;
   return true;
@@ -997,6 +1676,17 @@ static void build_small_web_files(const String &topic, String &html_out, String 
       "});\n";
 }
 
+static bool telegram_send_document_retry(const String &filename, const String &content,
+                                         const String &mime_type, const String &caption) {
+  for (int attempt = 0; attempt < 3; attempt++) {
+    if (transport_telegram_send_document(filename, content, mime_type, caption)) {
+      return true;
+    }
+    delay(180 + (attempt * 120));
+  }
+  return false;
+}
+
 static bool send_small_web_files(const String &topic, String &out) {
   String html;
   String css;
@@ -1024,14 +1714,12 @@ static bool send_small_web_files(const String &topic, String &out) {
   web_server_publish_file("script.js", js, "application/javascript");
 
   // Send files via Telegram too
-  bool ok_html = transport_telegram_send_document("index.html", html, "text/html",
-                                                  "Generated HTML");
+  bool ok_html = telegram_send_document_retry("index.html", html, "text/html", "Generated HTML");
   delay(120);
-  bool ok_css = transport_telegram_send_document("styles.css", css, "text/css",
-                                                 "Generated CSS");
+  bool ok_css = telegram_send_document_retry("styles.css", css, "text/css", "Generated CSS");
   delay(120);
-  bool ok_js = transport_telegram_send_document("script.js", js, "application/javascript",
-                                                "Generated JS");
+  bool ok_js =
+      telegram_send_document_retry("script.js", js, "application/javascript", "Generated JS");
 
   if (!ok_html && !ok_css && !ok_js) {
     out = "ERR: failed to send files";
@@ -1384,6 +2072,13 @@ static bool is_natural_web_iteration_request(const String &cmd_lc) {
       "revamp",
       "redesign",
       "enhance",
+      "update",
+      "change",
+      "modify",
+      "edit",
+      "turn",
+      "retheme",
+      "restyle",
       "upgrade ui",
       "make it",
       "update this",
@@ -1416,6 +2111,9 @@ static bool is_natural_web_iteration_request(const String &cmd_lc) {
   if (has_web) {
     return true;
   }
+  if (cmd_lc.indexOf("/projects/") >= 0 && has_edit) {
+    return true;
+  }
   if (!has_pronoun) {
     return false;
   }
@@ -1429,25 +2127,144 @@ static bool is_natural_web_iteration_request(const String &cmd_lc) {
          last_name.endsWith(".css") || last_name.endsWith(".js");
 }
 
-static bool extract_first_code_block_content(const String &text, String &code_out) {
-  int open = text.indexOf("```");
-  if (open < 0) {
-    code_out = text;
-    code_out.trim();
-    return code_out.length() > 0;
+static bool looks_like_html_payload(const String &text) {
+  String lc = text;
+  lc.toLowerCase();
+  const bool has_open = (lc.indexOf("<!doctype html") >= 0) || (lc.indexOf("<html") >= 0) ||
+                        (lc.indexOf("<head") >= 0) || (lc.indexOf("<body") >= 0);
+  const bool has_close = (lc.indexOf("</html>") >= 0) || (lc.indexOf("</body>") >= 0);
+  return has_open || has_close;
+}
+
+static bool looks_like_css_payload(const String &text) {
+  const bool has_braces = (text.indexOf('{') >= 0) && (text.indexOf('}') >= 0);
+  const bool has_style_tokens = (text.indexOf(':') >= 0) &&
+                                ((text.indexOf(';') >= 0) || (text.indexOf('}') >= 0));
+  return has_braces && has_style_tokens;
+}
+
+static bool looks_like_js_payload(const String &text) {
+  String lc = text;
+  lc.toLowerCase();
+  return (lc.indexOf("function ") >= 0) || (lc.indexOf("const ") >= 0) ||
+         (lc.indexOf("let ") >= 0) || (lc.indexOf("var ") >= 0) ||
+         (lc.indexOf("=>") >= 0) || (lc.indexOf("document.") >= 0) ||
+         (lc.indexOf("window.") >= 0);
+}
+
+static bool looks_like_non_code_chatter(const String &text) {
+  String lc = text;
+  lc.toLowerCase();
+  const char *markers[] = {
+      "minos nano ",
+      "<< 'eof'",
+      "eof done",
+      "roar!",
+      "understood! i'll",
+  };
+  for (size_t i = 0; i < (sizeof(markers) / sizeof(markers[0])); i++) {
+    if (lc.indexOf(markers[i]) >= 0) {
+      return true;
+    }
   }
-  int start = text.indexOf('\n', open + 3);
+  return false;
+}
+
+static bool extract_html_from_mixed_text(const String &text, String &html_out) {
+  String lc = text;
+  lc.toLowerCase();
+
+  int start = lc.indexOf("<!doctype html");
+  if (start < 0) {
+    start = lc.indexOf("<html");
+  }
   if (start < 0) {
     return false;
   }
-  start++;
-  int close = text.indexOf("```", start);
-  if (close < 0 || close <= start) {
+
+  int end = lc.lastIndexOf("</html>");
+  if (end >= start) {
+    html_out = text.substring(start, end + 7);
+    html_out.trim();
+    return html_out.length() > 0;
+  }
+
+  end = lc.lastIndexOf("</body>");
+  if (end >= start) {
+    html_out = text.substring(start, end + 7);
+    html_out.trim();
+    return html_out.length() > 0;
+  }
+
+  html_out = text.substring(start);
+  html_out.trim();
+  return looks_like_html_payload(html_out);
+}
+
+static bool extract_updated_file_content_from_llm_reply(const String &reply,
+                                                        const String &filename,
+                                                        String &content_out) {
+  String lc_name = filename;
+  lc_name.toLowerCase();
+  const bool wants_html = lc_name.endsWith(".html") || lc_name.endsWith(".htm");
+  const bool wants_css = lc_name.endsWith(".css");
+  const bool wants_js = lc_name.endsWith(".js");
+
+  // Prefer fenced blocks and pick the first one that matches the target file type.
+  int cursor = 0;
+  while (cursor < (int)reply.length()) {
+    int open = reply.indexOf("```", cursor);
+    if (open < 0) {
+      break;
+    }
+    int start = reply.indexOf('\n', open + 3);
+    if (start < 0) {
+      break;
+    }
+    start++;
+    int close = reply.indexOf("```", start);
+    if (close < 0 || close <= start) {
+      break;
+    }
+
+    String block = reply.substring(start, close);
+    block.trim();
+    if (block.length() > 0) {
+      const bool html_ok = wants_html && looks_like_html_payload(block);
+      const bool css_ok = wants_css && looks_like_css_payload(block);
+      const bool js_ok = wants_js && looks_like_js_payload(block);
+      if (html_ok || css_ok || js_ok) {
+        content_out = block;
+        return true;
+      }
+      if (!wants_html && !wants_css && !wants_js && !looks_like_non_code_chatter(block)) {
+        content_out = block;
+        return true;
+      }
+    }
+
+    cursor = close + 3;
+  }
+
+  // HTML is commonly returned with wrapper text; recover by slicing from <html>/<doctype>.
+  if (wants_html) {
+    return extract_html_from_mixed_text(reply, content_out);
+  }
+
+  String trimmed = reply;
+  trimmed.trim();
+  if (trimmed.length() == 0 || looks_like_non_code_chatter(trimmed)) {
     return false;
   }
-  code_out = text.substring(start, close);
-  code_out.trim();
-  return code_out.length() > 0;
+  if (wants_css && looks_like_css_payload(trimmed)) {
+    content_out = trimmed;
+    return true;
+  }
+  if (wants_js && looks_like_js_payload(trimmed)) {
+    content_out = trimmed;
+    return true;
+  }
+  return false;
 }
 
 static String file_basename(const String &path) {
@@ -1598,34 +2415,9 @@ static bool resolve_web_iteration_target_path(const String &input, String &path_
     return true;
   }
 
-  String last_content = agent_loop_get_last_file_content();
-  if (last_name.length() > 0 && is_web_asset_filename(last_name) && last_content.length() > 0) {
-    String scratch_path = "/projects/scratch/" + file_basename(last_name);
-    String write_err;
-    if (!file_memory_write_file(scratch_path, last_content, write_err)) {
-      error_out = "Failed to create editable project copy: " + write_err;
-      return false;
-    }
-    path_out = scratch_path;
-    return true;
-  }
-
-  const char *fallbacks[] = {
-      "/projects/default/index.html",
-      "/projects/website/index.html",
-      "/projects/mini_demo/index.html",
-      "/projects/saas_website/index.html",
-  };
-  for (size_t i = 0; i < sizeof(fallbacks) / sizeof(fallbacks[0]); i++) {
-    String probe;
-    String probe_err;
-    if (file_memory_read_file(String(fallbacks[i]), probe, probe_err)) {
-      path_out = String(fallbacks[i]);
-      return true;
-    }
-  }
-
-  error_out = "No website file found yet. Ask me: create a website first, then say make it better.";
+  error_out =
+      "No active /projects file to update.\n"
+      "Say it like: update /projects/<name>/index.html and make it better.";
   return false;
 }
 
@@ -1676,9 +2468,9 @@ static bool run_natural_web_iteration(const String &user_request, String &out) {
   }
 
   String updated_content;
-  if (!extract_first_code_block_content(llm_reply, updated_content) ||
+  if (!extract_updated_file_content_from_llm_reply(llm_reply, filename, updated_content) ||
       updated_content.length() == 0) {
-    out = "ERR: Could not parse updated file content from model output";
+    out = "ERR: Could not extract clean file content from model output";
     return true;
   }
 
@@ -1691,8 +2483,7 @@ static bool run_natural_web_iteration(const String &user_request, String &out) {
   agent_loop_set_last_file(target_path, updated_content);
 
   const String mime = mime_from_filename(filename);
-  bool doc_sent =
-      transport_telegram_send_document(filename, updated_content, mime, "Updated file");
+  bool doc_sent = telegram_send_document_retry(filename, updated_content, mime, "Updated file");
 
   String base_lc = filename;
   base_lc.toLowerCase();
@@ -1706,6 +2497,58 @@ static bool run_natural_web_iteration(const String &user_request, String &out) {
     out += "\nWARN: updated file saved, but sending document failed";
   }
   return true;
+}
+
+static bool extract_html_from_response_text(const String &response, String &html_out) {
+  html_out = "";
+  if (response.length() == 0) {
+    return false;
+  }
+
+  int start = response.indexOf("```html");
+  if (start >= 0) {
+    start = response.indexOf('\n', start);
+    if (start >= 0) {
+      start++;
+      int end = response.indexOf("```", start);
+      if (end > start) {
+        html_out = response.substring(start, end);
+        html_out.trim();
+        if (html_out.length() > 0) {
+          return true;
+        }
+      }
+    }
+  }
+
+  String lc = response;
+  lc.toLowerCase();
+  if (lc.indexOf("<!doctype html") >= 0 || lc.indexOf("<html") >= 0) {
+    if (extract_html_from_mixed_text(response, html_out) && html_out.length() > 0) {
+      return true;
+    }
+  }
+
+  int cb_start = response.indexOf("```");
+  if (cb_start >= 0) {
+    cb_start = response.indexOf('\n', cb_start);
+    if (cb_start >= 0) {
+      cb_start++;
+      int cb_end = response.indexOf("```", cb_start);
+      if (cb_end > cb_start) {
+        String block = response.substring(cb_start, cb_end);
+        String block_lc = block;
+        block_lc.toLowerCase();
+        if (block_lc.indexOf("<html") >= 0 || block_lc.indexOf("<!doctype") >= 0) {
+          html_out = block;
+          html_out.trim();
+          return html_out.length() > 0;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 static String normalize_command(const String &input) {
@@ -1890,6 +2733,10 @@ bool tool_registry_execute(const String &input, String &out) {
     }
   }
 
+  if (handle_onboarding_flow(cmd, cmd_lc, out)) {
+    return true;
+  }
+
   if (looks_like_email_request(cmd_lc) && !cmd_lc.startsWith("send_email ") &&
       !cmd_lc.startsWith("email_")) {
     String to, subject, body, llm_err;
@@ -1922,6 +2769,12 @@ bool tool_registry_execute(const String &input, String &out) {
   if (cmd_lc == "status") {
     out = "OK: alive";
     return true;
+  }
+
+  if (cmd_lc == "fresh_start" || cmd_lc == "start_fresh" || cmd_lc == "context_clear" ||
+      cmd_lc == "clear context" || cmd_lc == "reset context" ||
+      cmd_lc == "start from scratch" || cmd_lc == "new chat") {
+    return clear_all_conversation_context(out);
   }
 
   if (cmd_lc == "health") {
@@ -2885,20 +3738,39 @@ bool tool_registry_execute(const String &input, String &out) {
     String last_resp = agent_loop_get_last_response();
     String file_content = agent_loop_get_last_file_content();
     String file_name = agent_loop_get_last_file_name();
+    String html_from_response;
+    const bool has_html_from_response = extract_html_from_response_text(last_resp, html_from_response);
 
     // Priority 1: Use exact file memory if available
     if (file_content.length() > 0) {
       if (file_name.length() == 0) file_name = "index.html";
-      
-      // If filename is not html/js/css, default to index.html for hosting
-      if (!file_name.endsWith(".html") && !file_name.endsWith(".htm") && 
-          !file_name.endsWith(".js") && !file_name.endsWith(".css")) {
-         file_name = "index.html"; 
+
+      String file_name_lc = file_name;
+      file_name_lc.toLowerCase();
+      String content_to_host = file_content;
+      String mime = mime_from_filename(file_name);
+
+      // If the last remembered file is CSS/JS, prefer the HTML from last response.
+      if ((file_name_lc.endsWith(".js") || file_name_lc.endsWith(".css")) && has_html_from_response) {
+        file_name = "index.html";
+        content_to_host = html_from_response;
+        mime = "text/html";
       }
-      
-      web_server_publish_file(file_name, file_content, "text/html");
+
+      // If filename is not a web asset, default to index.html for hosting.
+      if (!file_name_lc.endsWith(".html") && !file_name_lc.endsWith(".htm") &&
+          !file_name_lc.endsWith(".js") && !file_name_lc.endsWith(".css")) {
+        file_name = "index.html";
+        mime = "text/html";
+      }
+
+      web_server_publish_file(file_name, content_to_host, mime);
       String ip = WiFi.localIP().toString();
-      out = "Website hosted on ESP32 (from memory)!\nAccess it at: http://" + ip + "/" + file_name;
+      String public_path = file_name;
+      if (!public_path.startsWith("/")) {
+        public_path = "/" + public_path;
+      }
+      out = "Website hosted on ESP32 (from memory)!\nAccess it at: http://" + ip + public_path;
       return true;
     }
 
@@ -2907,42 +3779,9 @@ bool tool_registry_execute(const String &input, String &out) {
       return true;
     }
 
-    // Priority 2: Try to extract HTML from code blocks
+    // Priority 2: Try to extract HTML from model response
     String html_content = "";
-    int start = last_resp.indexOf("```html");
-    if (start >= 0) {
-      start = last_resp.indexOf('\n', start) + 1;
-      int end = last_resp.indexOf("```", start);
-      if (end > start) {
-        html_content = last_resp.substring(start, end);
-      }
-    }
-
-    // Fallback: if response itself looks like HTML
-    if (html_content.length() == 0) {
-      String lc = last_resp;
-      lc.toLowerCase();
-      if (lc.indexOf("<html") >= 0 || lc.indexOf("<!doctype") >= 0) {
-        html_content = last_resp;
-      }
-    }
-
-    // Try extracting any code block as HTML if it contains HTML tags
-    if (html_content.length() == 0) {
-      int cb_start = last_resp.indexOf("```");
-      if (cb_start >= 0) {
-        cb_start = last_resp.indexOf('\n', cb_start) + 1;
-        int cb_end = last_resp.indexOf("```", cb_start);
-        if (cb_end > cb_start) {
-          String block = last_resp.substring(cb_start, cb_end);
-          String block_lc = block;
-          block_lc.toLowerCase();
-          if (block_lc.indexOf("<") >= 0 && block_lc.indexOf(">") >= 0) {
-            html_content = block;
-          }
-        }
-      }
-    }
+    extract_html_from_response_text(last_resp, html_content);
 
     if (html_content.length() == 0) {
       out = "Could not find HTML content in the last response. Ask me to create a website first!";
