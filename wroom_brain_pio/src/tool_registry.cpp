@@ -1212,6 +1212,20 @@ static bool parse_natural_daily_reminder(const String &input, String &hhmm_out, 
   }
 
   msg_lc = strip_daily_words(msg_lc);
+  if (msg_lc.length() == 0) {
+    // Fallback for patterns like:
+    // "schedule a reminder at 14:57 to drink water"
+    int to_pos = lc.lastIndexOf(" to ");
+    if (to_pos >= 0 && to_pos + 4 < (int)lc.length()) {
+      msg_lc = lc.substring(to_pos + 4);
+    }
+  }
+  if (msg_lc.length() == 0) {
+    int for_pos = lc.lastIndexOf(" for ");
+    if (for_pos >= 0 && for_pos + 5 < (int)lc.length()) {
+      msg_lc = lc.substring(for_pos + 5);
+    }
+  }
   msg_lc.replace(" at ", " ");
   msg_lc.replace(" am", "");
   msg_lc.replace(" pm", "");
@@ -1840,6 +1854,19 @@ static bool is_valid_hhmm(const String &value) {
   const int hh = (h1 - '0') * 10 + (h2 - '0');
   const int mm = (m1 - '0') * 10 + (m2 - '0');
   return hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59;
+}
+
+static bool is_time_synced_now() {
+  struct tm tm_now{};
+  return scheduler_get_local_time(tm_now);
+}
+
+static String unsynced_time_warning() {
+  if (is_time_synced_now()) {
+    return "";
+  }
+  return "\nWARN: clock not synced yet. Daily reminder will run after NTP sync.\n"
+         "Check: time_show";
 }
 
 static bool cron_expand_hhmm_shortcut(const String &input, String &cron_line_out) {
@@ -2813,7 +2840,7 @@ bool tool_registry_execute(const String &input, String &out) {
       String msg_for_user = reminder_message_for_user(s_pending_reminder_tz.message);
       out = "OK: timezone set to " + guessed_tz +
             "\nOK: daily reminder set at " + s_pending_reminder_tz.hhmm +
-            "\nMessage: " + msg_for_user;
+            "\nMessage: " + msg_for_user + unsynced_time_warning();
       clear_pending_reminder_tz();
       return true;
     }
@@ -3601,7 +3628,7 @@ bool tool_registry_execute(const String &input, String &out) {
       }
       String msg_for_user = reminder_message_for_user(s_pending_reminder_tz.message);
       out = "OK: timezone set to " + tz + "\nOK: daily reminder set at " + s_pending_reminder_tz.hhmm +
-            "\nMessage: " + msg_for_user;
+            "\nMessage: " + msg_for_user + unsynced_time_warning();
       clear_pending_reminder_tz();
       return true;
     }
@@ -3648,7 +3675,8 @@ bool tool_registry_execute(const String &input, String &out) {
       return true;
     }
     event_log_append("REMINDER set daily " + hhmm);
-    out = "OK: daily reminder set at " + hhmm + "\nMessage: " + reminder_message_for_user(message);
+    out = "OK: daily reminder set at " + hhmm + "\nMessage: " + reminder_message_for_user(message) +
+          unsynced_time_warning();
     return true;
   }
 
@@ -4035,10 +4063,84 @@ bool tool_registry_execute(const String &input, String &out) {
       return true;
     }
     event_log_append("WEBJOB set daily " + hhmm);
-    out = "OK: daily web job set at " + hhmm + "\nTask: " + task;
+    out = "OK: daily web job set at " + hhmm + "\nTask: " + task + unsynced_time_warning();
     return true;
   }
 #endif
+
+  // Natural-language scheduling (without explicit command prefix)
+  String natural_web_hhmm;
+  String natural_web_task;
+  if (parse_natural_daily_webjob(cmd, natural_web_hhmm, natural_web_task)) {
+    String encoded_msg = encode_webjob_message(natural_web_task);
+    String err;
+    if (!has_user_timezone()) {
+      s_pending_reminder_tz.active = true;
+      s_pending_reminder_tz.hhmm = natural_web_hhmm;
+      s_pending_reminder_tz.message = encoded_msg;
+      s_pending_reminder_tz.expires_ms = millis() + kPendingReminderTzMs;
+      clear_pending_reminder_details();
+      out = "Before I set that web job, tell me your timezone.\n"
+            "Reply: timezone_set Asia/Kolkata";
+      return true;
+    }
+    if (!persona_set_daily_reminder(natural_web_hhmm, encoded_msg, err)) {
+      out = "ERR: " + err;
+      return true;
+    }
+    event_log_append("WEBJOB set daily " + natural_web_hhmm + " (natural)");
+    out = "OK: daily web job set at " + natural_web_hhmm + "\nTask: " + natural_web_task +
+          unsynced_time_warning();
+    return true;
+  }
+
+  String reminder_change_hhmm;
+  if (parse_natural_reminder_time_change(cmd, reminder_change_hhmm)) {
+    String old_hhmm;
+    String old_msg;
+    String err;
+    if (!persona_get_daily_reminder(old_hhmm, old_msg, err)) {
+      out = "ERR: " + err;
+      return true;
+    }
+    old_hhmm.trim();
+    old_msg.trim();
+    if (old_hhmm.length() == 0 || old_msg.length() == 0) {
+      out = "No daily reminder to update. First set one with: reminder_set_daily <HH:MM> <message>";
+      return true;
+    }
+    if (!persona_set_daily_reminder(reminder_change_hhmm, old_msg, err)) {
+      out = "ERR: " + err;
+      return true;
+    }
+    out = "OK: daily reminder updated to " + reminder_change_hhmm +
+          "\nMessage: " + reminder_message_for_user(old_msg) + unsynced_time_warning();
+    return true;
+  }
+
+  String natural_rem_hhmm;
+  String natural_rem_msg;
+  if (parse_natural_daily_reminder(cmd, natural_rem_hhmm, natural_rem_msg, true)) {
+    String err;
+    if (!has_user_timezone()) {
+      s_pending_reminder_tz.active = true;
+      s_pending_reminder_tz.hhmm = natural_rem_hhmm;
+      s_pending_reminder_tz.message = natural_rem_msg;
+      s_pending_reminder_tz.expires_ms = millis() + kPendingReminderTzMs;
+      clear_pending_reminder_details();
+      out = "Before I set that reminder, tell me your timezone.\n"
+            "Reply: timezone_set Asia/Kolkata";
+      return true;
+    }
+    if (!persona_set_daily_reminder(natural_rem_hhmm, natural_rem_msg, err)) {
+      out = "ERR: " + err;
+      return true;
+    }
+    event_log_append("REMINDER set daily " + natural_rem_hhmm + " (natural)");
+    out = "OK: daily reminder set at " + natural_rem_hhmm +
+          "\nMessage: " + reminder_message_for_user(natural_rem_msg) + unsynced_time_warning();
+    return true;
+  }
 
   if (cmd_lc == "soul_show" || cmd_lc == "soul") {
     String soul, err;
