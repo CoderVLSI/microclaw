@@ -205,16 +205,28 @@ int cron_store_check_missed_jobs(time_t now, MissedJob *missed_jobs, int max_job
     return 0;
   }
 
+  // Bound recovery window to avoid expensive scans after very long offline periods.
+  const time_t MAX_LOOKBACK = 48 * 3600;
+  if ((now - last_check) > MAX_LOOKBACK) {
+    last_check = now - MAX_LOOKBACK;
+  }
+
   int missed_count = 0;
-  const time_t CHECK_INTERVAL = 3600;  // Check every hour
+  const time_t CHECK_INTERVAL = 60;  // Check every minute
+
+  // Start from the next full minute boundary.
+  time_t t = (last_check / 60) * 60;
+  if (t <= last_check) {
+    t += CHECK_INTERVAL;
+  }
 
   // Iterate through time from last_check to now
-  for (time_t t = last_check; t < now && missed_count < max_jobs; t += CHECK_INTERVAL) {
-    // Only check times that are exactly on the minute (scheduled times)
-    // We need to check if a job SHOULD have triggered at this time
-
-    struct tm *tm_check = localtime(&t);
-    int check_minute = tm_check->tm_hour * 60 + tm_check->tm_min;
+  for (; t <= now && missed_count < max_jobs; t += CHECK_INTERVAL) {
+    struct tm tm_check_storage{};
+    struct tm *tm_check = localtime_r(&t, &tm_check_storage);
+    if (!tm_check) {
+      continue;
+    }
 
     // For each cron job, check if it should have triggered
     for (int i = 0; i < s_cached_count && missed_count < max_jobs; i++) {

@@ -35,5 +35,6 @@ bool file_memory_get_info(String &info_out, String &error_out);
 // File listing and reading
 bool file_memory_list_files(String &list_out, String &error_out);
 bool file_memory_read_file(const String &filename, String &content_out, String &error_out);
+bool file_memory_write_file(const String &filename, const String &content, String &error_out);
 
 #endif

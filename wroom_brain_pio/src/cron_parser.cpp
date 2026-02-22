@@ -9,8 +9,21 @@ static int parse_cron_field(const String &field, int min_val, int max_val, Strin
     return -1;
   }
 
+  if (f.length() == 0) {
+    error = "Empty field";
+    return -2;
+  }
+
+  // Strict numeric validation (reject values like "14:05" or "60abc").
+  for (int i = 0; i < (int)f.length(); i++) {
+    if (f[i] < '0' || f[i] > '9') {
+      error = "Invalid numeric value: " + f;
+      return -2;
+    }
+  }
+
   // Parse as number
-  int val = f.toInt();
+  int val = atoi(f.c_str());
   if (val < min_val || val > max_val) {
     error = "Value " + String(val) + " out of range [" + String(min_val) + "-" + String(max_val) + "]";
     return -2;

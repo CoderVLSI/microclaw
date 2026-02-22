@@ -24,7 +24,7 @@ static const ReactTool s_react_tools[] = {
     {"memory_clear", "Clear all stored memories from MEMORY.md", "none", "memory_clear"},
     {"file_memory", "Show SPIFFS file system info", "none", "file_memory"},
     {"files_list", "List all files in SPIFFS", "none", "files_list"},
-    {"files_get", "Read a file from SPIFFS", "<filename>", "files_get: cron.md"},
+    {"files_get", "Read a file from SPIFFS", "<filename>", "files_get: /projects/demo/index.html"},
     {"user_read", "Read user profile (USER.md)", "none", "user_read"},
     {"soul_show", "Show current personality/soul (SOUL.md)", "none", "soul_show"},
     {"soul_set", "Set new personality/soul (SOUL.md)", "<soul description>", "soul_set: You are a helpful robot assistant"},
@@ -122,7 +122,7 @@ static const ReactTool s_react_tools[] = {
     {"skill_show", "Show full content of a skill", "<skill_name>", "skill_show morning_briefing"},
     {"skill_add", "Create a new reusable skill on SPIFFS", "<name> <description>: <step-by-step instructions>", "skill_add debug_helper Debug code issues: 1. Ask for error message 2. Analyze code 3. Suggest fix"},
     {"skill_remove", "Delete a skill from SPIFFS", "<skill_name>", "skill_remove old_skill"},
-    {"minos", "Execute a MinOS shell command (ls, cat, nano, append, ps, free, df, uptime, reboot)", "<command>", "minos: nano myfile.txt Hello World"},
+    {"minos", "Execute a MinOS shell command (ls, cat, nano, append, ps, free, df, uptime, reboot)", "<command>", "minos: nano /projects/demo/index.html <html>...</html>"},
 };
 // clang-format on
 
@@ -168,6 +168,7 @@ String build_react_system_prompt() {
             "- Read tool results, THINK again, continue\n"
             "- Use ANSWER when task is complete\n"
             "- Be brief and helpful\n"
+            "- For iterative coding, prefer SPIFFS project paths (/projects/<name>/...). Read file first, then update.\n"
             "- For SCHEDULING: Use cron_add with format: <min> <hr> <day> <mo> <wkday> | <command>\n"
             "  Natural language examples → cron_add:\n"
             "    'remind me at 9am daily' → cron_add 0 9 * * * | <message>\n"

@@ -19,6 +19,12 @@ const char *kSafeModeKey = "safe";
 const char *kEmailToKey = "emailto";
 const char *kEmailSubjectKey = "emailsub";
 const char *kEmailBodyKey = "emailbody";
+const char *kOnboardingDoneKey = "onb_done";
+const char *kOnboardingStepKey = "onb_step";
+const char *kOnboardingProviderKey = "onb_prov";
+const char *kOnboardingUserNameKey = "onb_user";
+const char *kOnboardingBotNameKey = "onb_bot";
+const char *kOnboardingPurposeKey = "onb_purp";
 
 bool ensure_ready(String &error_out) {
   if (g_ready) {
@@ -225,5 +231,73 @@ bool persona_clear_email_draft(String &error_out) {
   g_prefs.remove(kEmailToKey);
   g_prefs.remove(kEmailSubjectKey);
   g_prefs.remove(kEmailBodyKey);
+  return true;
+}
+
+bool persona_set_onboarding_done(bool done, String &error_out) {
+  if (!ensure_ready(error_out)) {
+    return false;
+  }
+  g_prefs.putUChar(kOnboardingDoneKey, done ? 1 : 0);
+  return true;
+}
+
+bool persona_get_onboarding_done(bool &done_out, String &error_out) {
+  if (!ensure_ready(error_out)) {
+    return false;
+  }
+  done_out = g_prefs.getUChar(kOnboardingDoneKey, 0) == 1;
+  return true;
+}
+
+bool persona_set_onboarding_step(const String &step, String &error_out) {
+  return set_key_limited(kOnboardingStepKey, step, 24, error_out);
+}
+
+bool persona_get_onboarding_step(String &step_out, String &error_out) {
+  return get_key(kOnboardingStepKey, step_out, error_out);
+}
+
+bool persona_set_onboarding_provider(const String &provider, String &error_out) {
+  return set_key_limited(kOnboardingProviderKey, provider, 24, error_out);
+}
+
+bool persona_get_onboarding_provider(String &provider_out, String &error_out) {
+  return get_key(kOnboardingProviderKey, provider_out, error_out);
+}
+
+bool persona_set_onboarding_user_name(const String &name, String &error_out) {
+  return set_key_limited(kOnboardingUserNameKey, name, 48, error_out);
+}
+
+bool persona_get_onboarding_user_name(String &name_out, String &error_out) {
+  return get_key(kOnboardingUserNameKey, name_out, error_out);
+}
+
+bool persona_set_onboarding_bot_name(const String &name, String &error_out) {
+  return set_key_limited(kOnboardingBotNameKey, name, 48, error_out);
+}
+
+bool persona_get_onboarding_bot_name(String &name_out, String &error_out) {
+  return get_key(kOnboardingBotNameKey, name_out, error_out);
+}
+
+bool persona_set_onboarding_purpose(const String &purpose, String &error_out) {
+  return set_key_limited(kOnboardingPurposeKey, purpose, 180, error_out);
+}
+
+bool persona_get_onboarding_purpose(String &purpose_out, String &error_out) {
+  return get_key(kOnboardingPurposeKey, purpose_out, error_out);
+}
+
+bool persona_clear_onboarding_state(String &error_out) {
+  if (!ensure_ready(error_out)) {
+    return false;
+  }
+  g_prefs.remove(kOnboardingStepKey);
+  g_prefs.remove(kOnboardingProviderKey);
+  g_prefs.remove(kOnboardingUserNameKey);
+  g_prefs.remove(kOnboardingBotNameKey);
+  g_prefs.remove(kOnboardingPurposeKey);
   return true;
 }

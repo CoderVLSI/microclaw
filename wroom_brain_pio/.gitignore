@@ -2,3 +2,4 @@
 .pio/
 .vscode/
 include/brain_secrets.generated.h
+scripts/baileys-service/node_modules/

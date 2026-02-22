@@ -34,6 +34,7 @@ bool g_backend_ready = false;
 const char *kMemoryDir = "/memory";
 const char *kConfigDir = "/config";
 const char *kSessionsDir = "/sessions";
+const char *kProjectsDir = "/projects";
 
 const char *kLongTermMemoryPath = "/memory/MEMORY.md";
 const char *kSoulPath = "/config/SOUL.md";
@@ -129,6 +130,12 @@ bool ensure_directories() {
   if (!fs_exists(kSessionsDir)) {
     if (!fs_mkdir(kSessionsDir)) {
       Serial.println("[file_memory] Failed to create /sessions directory");
+      return false;
+    }
+  }
+  if (!fs_exists(kProjectsDir)) {
+    if (!fs_mkdir(kProjectsDir)) {
+      Serial.println("[file_memory] Failed to create /projects directory");
       return false;
     }
   }
@@ -642,20 +649,42 @@ bool file_memory_list_files(String &list_out, String &error_out) {
   return true;
 }
 
+static String normalize_user_path(String path) {
+  path.trim();
+  if (!path.startsWith("/") && !path.startsWith("/memory/") &&
+      !path.startsWith("/config/") && !path.startsWith("/sessions/") &&
+      !path.startsWith("/projects/")) {
+    path = "/" + path;
+  }
+  return path;
+}
+
+static bool ensure_parent_dirs_for_path(const String &path, String &error_out) {
+  int slash = path.indexOf('/');
+  while (slash >= 0) {
+    slash = path.indexOf('/', slash + 1);
+    if (slash < 0) {
+      break;
+    }
+    String dir = path.substring(0, slash);
+    if (dir.length() == 0) {
+      continue;
+    }
+    if (!fs_exists(dir.c_str()) && !fs_mkdir(dir.c_str())) {
+      error_out = "Failed to create directory: " + dir;
+      return false;
+    }
+  }
+  return true;
+}
+
 bool file_memory_read_file(const String &filename, String &content_out, String &error_out) {
   if (!g_backend_ready) {
     error_out = "Filesystem not ready";
     return false;
   }
 
-  String path = filename;
-  path.trim();
-
-  // Don't add leading slash if already present
-  if (!path.startsWith("/") && !path.startsWith("/memory/") &&
-      !path.startsWith("/config/") && !path.startsWith("/sessions/")) {
-    path = "/" + path;
-  }
+  String path = normalize_user_path(filename);
 
   if (!fs_exists(path.c_str())) {
     error_out = "File not found: " + filename;
@@ -699,5 +728,38 @@ bool file_memory_read_file(const String &filename, String &content_out, String &
     return false;
   }
 
+  return true;
+}
+
+bool file_memory_write_file(const String &filename, const String &content, String &error_out) {
+  if (!g_backend_ready) {
+    error_out = "Filesystem not ready";
+    return false;
+  }
+
+  String path = normalize_user_path(filename);
+  if (path.length() == 0 || path == "/") {
+    error_out = "Invalid filename";
+    return false;
+  }
+
+  if (!ensure_parent_dirs_for_path(path, error_out)) {
+    return false;
+  }
+
+  fs::File f = fs_open(path.c_str(), FILE_WRITE);
+  if (!f) {
+    error_out = "Failed to open file for write: " + path;
+    return false;
+  }
+
+  const size_t written = f.print(content);
+  f.close();
+  if (written != content.length()) {
+    error_out = "Partial write to file: " + path;
+    return false;
+  }
+
+  Serial.printf("[file_memory] Wrote %d bytes to %s\n", content.length(), path.c_str());
   return true;
 }

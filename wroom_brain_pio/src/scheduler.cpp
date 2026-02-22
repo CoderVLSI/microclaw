@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <stdlib.h>
 #include <time.h>
 
 #include "brain_config.h"
@@ -23,6 +24,8 @@ static long s_last_tz_offset_seconds = 0;
 static unsigned long s_next_cron_check_ms = 0;
 static int s_last_cron_minute = -1;
 static bool s_checked_missed_jobs = false;  // Track if we've checked for missed jobs
+static unsigned long s_next_reminder_check_ms = 0;
+static int s_last_reminder_minute = -1;
 
 static String to_lower_copy(String value) {
   value.toLowerCase();
@@ -156,6 +159,55 @@ static bool parse_hhmm(const String &value, int &hour_out, int &minute_out) {
   return true;
 }
 
+static void check_daily_reminder(incoming_cb_t dispatch_cb, const struct tm &tm_now) {
+  const int current_minute = tm_now.tm_hour * 60 + tm_now.tm_min;
+  if (current_minute == s_last_reminder_minute) {
+    return;
+  }
+  s_last_reminder_minute = current_minute;
+
+  String hhmm;
+  String message;
+  String err;
+  if (!persona_get_daily_reminder(hhmm, message, err)) {
+    return;
+  }
+
+  hhmm.trim();
+  message.trim();
+  if (hhmm.length() == 0 || message.length() == 0) {
+    return;
+  }
+
+  int target_hour = -1;
+  int target_minute = -1;
+  if (!parse_hhmm(hhmm, target_hour, target_minute)) {
+    return;
+  }
+
+  if (tm_now.tm_hour == target_hour && tm_now.tm_min == target_minute) {
+    event_log_append("SCHED: reminder_run " + hhmm);
+    dispatch_cb(String("reminder_run"));
+    Serial.printf("[scheduler] Daily reminder triggered at %s\n", hhmm.c_str());
+  }
+}
+
+static long runtime_tz_offset_seconds() {
+  time_t now = time(nullptr);
+  if (now < 1700000000) {
+    return 0;
+  }
+
+  struct tm local_tm{};
+  struct tm utc_tm{};
+  localtime_r(&now, &local_tm);
+  gmtime_r(&now, &utc_tm);
+
+  const time_t local_epoch = mktime(&local_tm);
+  const time_t utc_epoch = mktime(&utc_tm);
+  return (long)difftime(local_epoch, utc_epoch);
+}
+
 static void ensure_time_configured() {
   if (WiFi.status() != WL_CONNECTED) {
     return;
@@ -171,17 +223,22 @@ static void ensure_time_configured() {
     }
   }
   tz = normalize_tz_for_esp(tz);
-  const long offset = resolve_tz_offset_seconds(tz);
-
-  if (s_time_configured && tz == s_last_tz && offset == s_last_tz_offset_seconds) {
+  if (s_time_configured && tz == s_last_tz) {
     return;
   }
 
+  setenv("TZ", tz.c_str(), 1);
+  tzset();
   configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2);
+
   s_time_configured = true;
   s_last_tz = tz;
+  long offset = runtime_tz_offset_seconds();
+  if (offset == 0) {
+    offset = resolve_tz_offset_seconds(tz);
+  }
   s_last_tz_offset_seconds = offset;
-  Serial.println("[scheduler] time sync configured: " + tz + " offset=" + String((long)offset));
+  Serial.println("[scheduler] time sync configured: " + tz + " offset=" + String((long)s_last_tz_offset_seconds));
 }
 
 bool scheduler_get_local_time(struct tm &tm_out) {
@@ -190,8 +247,8 @@ bool scheduler_get_local_time(struct tm &tm_out) {
   if (now < 1700000000) {
     return false;
   }
-  now += s_last_tz_offset_seconds;
-  gmtime_r(&now, &tm_out);
+  localtime_r(&now, &tm_out);
+  s_last_tz_offset_seconds = runtime_tz_offset_seconds();
   return true;
 }
 
@@ -256,6 +313,7 @@ void scheduler_init() {
   }
 
   s_next_cron_check_ms = millis() + 5000;
+  s_next_reminder_check_ms = millis() + 5000;
   Serial.println("[scheduler] cron jobs enabled");
 }
 
@@ -296,14 +354,14 @@ void scheduler_tick(incoming_cb_t dispatch_cb) {
   if ((long)(now - s_next_cron_check_ms) >= 0) {
     s_next_cron_check_ms = now + 15000;
 
-    // Check for missed jobs on first successful time sync
-    check_missed_cron_jobs(dispatch_cb);
-
     struct tm tm_now{};
     if (!scheduler_get_local_time(tm_now)) {
       // No time sync yet, skip cron check
       return;
     }
+
+    // Check for missed jobs on first successful time sync
+    check_missed_cron_jobs(dispatch_cb);
 
     const int current_minute = tm_now.tm_hour * 60 + tm_now.tm_min;
 
@@ -335,6 +393,18 @@ void scheduler_tick(incoming_cb_t dispatch_cb) {
       }
     }
   }
+
+  // Daily reminder check
+  if ((long)(now - s_next_reminder_check_ms) >= 0) {
+    s_next_reminder_check_ms = now + 15000;
+
+    struct tm tm_now{};
+    if (!scheduler_get_local_time(tm_now)) {
+      return;
+    }
+
+    check_daily_reminder(dispatch_cb, tm_now);
+  }
 }
 
 void scheduler_time_debug(String &out) {
@@ -349,8 +419,8 @@ void scheduler_time_debug(String &out) {
 
   if (now >= 1700000000) {
     struct tm tm_now{};
-    time_t local_now = now + s_last_tz_offset_seconds;
-    gmtime_r(&local_now, &tm_now);
+    localtime_r(&now, &tm_now);
+    s_last_tz_offset_seconds = runtime_tz_offset_seconds();
     char buf[32];
     snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
              tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday,

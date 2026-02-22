@@ -1,0 +1,14 @@
+code_*.html
+
+# Local machine/editor state
+.claude/settings.local.json
+
+# Generated or large local-only web app workspace
+Timiclaw-Website/
+
+# Root npm lockfile is local scratch (no root package.json)
+/package-lock.json
+
+# Baileys local runtime artifacts
+wroom_brain_pio/scripts/baileys-service/node_modules/
+wroom_brain_pio/scripts/baileys-service/auth_info_baileys/

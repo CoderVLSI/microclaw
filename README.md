@@ -3,7 +3,7 @@
   <img src="assets/timiclaw-banner.png" alt="TimiClaw banner" width="920" />
 </p>
 
-Timiclaw is an ESP32-based autonomous Telegram agent. It runs directly on-device, executes only allowlisted tools, supports optional LLM providers, and can schedule reminders/web jobs while keeping state in NVS.
+Timiclaw is an ESP32-based autonomous Telegram agent. It runs directly on-device, executes only allowlisted tools, supports optional LLM providers, provides first-time onboarding, and can schedule reminders/web jobs while keeping state in NVS.
 
 ## Overview
 
@@ -12,6 +12,7 @@ Timiclaw is an ESP32-based autonomous Telegram agent. It runs directly on-device
 - Transport: Telegram Bot API polling + sendMessage/sendDocument/sendPhoto
 - Persistence: on-device NVS (memory, tasks, persona, reminder settings, logs)
 - LLM: optional (`openai`, `anthropic`, `gemini`, `glm`) for planning/chat/routing
+- Web dashboard: chat + config + health at `http://<ESP32-IP>/`
 
 ## Repository Layout
 
@@ -53,6 +54,7 @@ flowchart TD
 - Telegram command handling with allowlist-first execution
 - Optional natural-language routing to tool commands
 - General LLM chat fallback when no explicit command matches
+- First-time onboarding wizard (`/start` + onboarding commands)
 - Planning tool: `plan <task>`
 - Daily reminders and daily web jobs
 - On-device memory and task management
@@ -60,6 +62,8 @@ flowchart TD
 - Event logs
 - Image generation command (`generate_image <prompt>`)
 - Web file generator command (`web_files_make [topic]`) with file delivery via Telegram
+- Natural website iteration on existing `/projects/...` files
+- Context reset (`fresh_start`) that clears chat memory but keeps `/projects`
 - **Web Dashboard**:
   - Accessible at `http://<ESP32-IP>/`.
   - Chat interface with history.
@@ -74,6 +78,7 @@ flowchart TD
 ## Supported Commands (Current)
 
 Core:
+- `start` (or `/start` in Telegram)
 - `status`
 - `help`
 - `health`
@@ -97,6 +102,10 @@ Memory/persona:
 - `remember <note>`
 - `memory`
 - `forget`
+- `fresh_start`
+- `onboarding_start`
+- `onboarding_status`
+- `onboarding_skip`
 - `soul_show`
 - `soul_set <text>`
 - `soul_clear`
@@ -131,9 +140,11 @@ Tasks/email/logs:
 
 Web files:
 - `web_files_make [topic]`
+- `host it`
+- `list projects`
 - Natural prompts like:
   - `create html file for saas website and send`
-  - `make the website more stunning`
+  - `update /projects/saas_template/index.html and make it more stunning`
 
 ## Hardware Requirements
 
@@ -254,6 +265,9 @@ Bot does not reply:
 
 `ERR: Could not parse provider response`:
 - Reflash latest firmware (parser robustness was improved)
+
+`ERR: LLM HTTP -1`:
+- Network timeout or provider connection failure; verify Wi-Fi signal, endpoint URL, and API key
 
 Upload fails with boot mode errors:
 - Hold `BOOT` while starting upload, release once writing starts
