@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
+#include <time.h>
 
 #include "agent_loop.h"
 #include "brain_config.h"
@@ -22,6 +23,7 @@
 #include "web_job_client.h"
 #include "web_server.h"
 #include "web_search.h"
+#include "voice_capture.h"
 #include "email_client.h"
 #include "discord_client.h"
 #include "usage_stats.h"
@@ -234,7 +236,10 @@ void build_help_text(String &out) {
 #endif
   out += "/cron_add <expr> | <cmd> - Add cron job\n";
   out += "/cron_list - List all cron jobs\n";
-  out += "/cron_show - Show cron.md content\n";
+  out += "/cron_show - Show cron jobs (detailed)\n";
+  out += "/cron_remove <id> - Remove cron job\n";
+  out += "/cron_pause <id> - Pause cron job\n";
+  out += "/cron_resume <id> - Resume cron job\n";
   out += "/cron_clear - Clear all cron jobs\n";
   out += "/reminder_set_daily <HH:MM> <msg> - Set daily reminder\n";
   out += "/reminder_show - Show daily reminder\n";
@@ -261,6 +266,11 @@ void build_help_text(String &out) {
   out += "/logs - Show logs\n";
   out += "/logs_clear - Clear logs\n";
   out += "/search <query> - Web search (Serper > Tavily)\n";
+#if ENABLE_VOICE
+  out += "/voice_stream - Start streaming audio to Serial (binary PCM)\n";
+  out += "/voice_stop - Stop streaming\n";
+  out += "/voice_status - Check streaming status\n";
+#endif
   out += "/time_show - Show current time\n";
   out += "/soul_show - Show soul\n";
   out += "/soul_set <text> - Update soul\n";
@@ -317,7 +327,8 @@ void tool_registry_init() {
 #if ENABLE_PLAN
       "plan <task>, "
 #endif
-      "cron_add/cron_list/cron_show/cron_clear, reminder_set_daily/reminder_show/reminder_clear, "
+      "cron_add/cron_list/cron_show/cron_remove/cron_pause/cron_resume/cron_clear, "
+      "reminder_set_daily/reminder_show/reminder_clear, "
       "timezone_show/timezone_set/timezone_clear, "
 #if ENABLE_WEB_JOBS
       "webjob_set_daily/webjob_show/webjob_run/webjob_clear, "
@@ -1234,6 +1245,19 @@ static bool parse_natural_daily_reminder(const String &input, String &hhmm_out, 
   msg_lc.replace("afternoon", "");
   msg_lc.replace("night", "");
   msg_lc = compact_spaces(msg_lc);
+
+  // Remove a trailing explicit HH:MM token that can leak from natural parsing.
+  int tail_sp = msg_lc.lastIndexOf(' ');
+  if (tail_sp > 0) {
+    String tail = msg_lc.substring(tail_sp + 1);
+    tail.trim();
+    int th = -1;
+    int tm = -1;
+    if (sscanf(tail.c_str(), "%d:%d", &th, &tm) == 2 && th >= 0 && th <= 23 && tm >= 0 && tm <= 59) {
+      msg_lc = msg_lc.substring(0, tail_sp);
+      msg_lc = compact_spaces(msg_lc);
+    }
+  }
 
   // Remove leading time tokens if still present.
   if (msg_lc.length() >= 2 && msg_lc[0] >= '0' && msg_lc[0] <= '9') {
@@ -3398,7 +3422,7 @@ bool tool_registry_execute(const String &input, String &out) {
     return true;
   }
 
-  // Web search command (Serper > Tavily fallback)
+  // Web search command (Serper > Tavily fallback + summary)
   if (cmd_lc == "search" || cmd_lc.startsWith("search ")) {
     String query;
     if (cmd_lc.startsWith("search ")) {
@@ -3411,12 +3435,38 @@ bool tool_registry_execute(const String &input, String &out) {
       return true;
     }
 
-    String error;
-    if (!web_search_simple(query, out, error)) {
-      out = "ERR: " + error;
+    return tool_web_search(query, out);
+  }
+
+#if ENABLE_VOICE
+  // Voice capture commands - continuous streaming to Serial
+  if (cmd_lc == "voice_start" || cmd_lc == "voice_stream") {
+    if (voice_start_streaming()) {
+      out = "🎤 Voice streaming STARTED!\n\n";
+      out += "Audio is now streaming to Serial as binary PCM.\n";
+      out += "Connect to COM port and capture using Python.\n";
+      out += "Use /voice_stop to end streaming.";
+    } else {
+      out = "ERR: Already streaming";
     }
     return true;
   }
+
+  if (cmd_lc == "voice_stop" || cmd_lc == "voice_stop") {
+    voice_stop_streaming();
+    out = "🎤 Voice streaming STOPPED";
+    return true;
+  }
+
+  if (cmd_lc == "voice_status" || cmd_lc == "voice_status") {
+    if (voice_is_streaming()) {
+      out = "🎤 Currently streaming audio to Serial...";
+    } else {
+      out = "🎤 Voice idle (not streaming)";
+    }
+    return true;
+  }
+#endif
 
   if (cmd_lc == "time_show" || cmd_lc == "clock" || cmd_lc == "time") {
     scheduler_time_debug(out);
@@ -3768,6 +3818,8 @@ bool tool_registry_execute(const String &input, String &out) {
 
     if (tail.length() == 0) {
       out = "ERR: usage: cron_add <minute> <hour> <day> <month> <weekday> | <command>\n"
+            "       cron_add every <seconds> | <command>\n"
+            "       cron_add at <epoch> | <command>\n"
             "Shortcut: cron_add <HH:MM> | <command>\n"
             "Example: cron_add 0 9 * * * | Good morning\n"
             "Fields: minute(0-59) hour(0-23) day(1-31) month(1-12) weekday(0-6, Sun=0)\n"
@@ -3809,10 +3861,66 @@ bool tool_registry_execute(const String &input, String &out) {
       String content;
       String err;
       if (cron_store_get_content(content, err)) {
-        out += "\n--- cron.md ---\n" + content;
+        out += "\n--- cron store ---\n" + content;
       }
     }
 
+    return true;
+  }
+
+  if (cmd_lc == "cron_remove" || cmd_lc.startsWith("cron_remove ")) {
+    String id = cmd.length() > 11 ? cmd.substring(11) : "";
+    id.trim();
+    if (id.length() == 0) {
+      out = "ERR: usage cron_remove <id>";
+      return true;
+    }
+    String err;
+    if (!cron_store_remove(id, err)) {
+      out = "ERR: " + err;
+      return true;
+    }
+    out = "OK: cron job removed: " + id;
+    return true;
+  }
+
+  if (cmd_lc == "cron_pause" || cmd_lc.startsWith("cron_pause ")) {
+    String id = cmd.length() > 10 ? cmd.substring(10) : "";
+    id.trim();
+    if (id.length() == 0) {
+      out = "ERR: usage cron_pause <id>";
+      return true;
+    }
+    String err;
+    if (!cron_store_set_enabled(id, false, err)) {
+      out = "ERR: " + err;
+      return true;
+    }
+    out = "OK: cron job paused: " + id;
+    return true;
+  }
+
+  if (cmd_lc == "cron_resume" || cmd_lc.startsWith("cron_resume ")) {
+    String id = cmd.length() > 11 ? cmd.substring(11) : "";
+    id.trim();
+    if (id.length() == 0) {
+      out = "ERR: usage cron_resume <id>";
+      return true;
+    }
+    String err;
+    if (!cron_store_set_enabled(id, true, err)) {
+      out = "ERR: " + err;
+      return true;
+    }
+    struct tm tm_now{};
+    if (scheduler_get_local_time(tm_now)) {
+      time_t now_epoch = time(nullptr);
+      String prime_err;
+      if (!cron_store_prime_job(id, now_epoch, prime_err)) {
+        Serial.printf("[tools] cron_resume prime failed for %s: %s\n", id.c_str(), prime_err.c_str());
+      }
+    }
+    out = "OK: cron job resumed: " + id;
     return true;
   }
 
@@ -5292,11 +5400,11 @@ bool tool_registry_execute(const String &input, String &out) {
   }
 
   // Web Tools
-  if (cmd_lc.startsWith("search ") || cmd_lc.startsWith("web_search ")) {
-    String query = cmd.substring(cmd_lc.indexOf(' ') + 1);
+  if (cmd_lc == "web_search" || cmd_lc.startsWith("web_search ")) {
+    String query = cmd.length() > 11 ? cmd.substring(11) : "";
     query.trim();
     if (query.length() == 0) {
-      out = "ERR: usage search <query>";
+      out = "ERR: usage web_search <query>";
       return true;
     }
     return tool_web_search(query, out);

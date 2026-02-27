@@ -9,34 +9,9 @@
 static const int kMaxResults = 10;
 static const int kTimeoutMs = WEB_SEARCH_TIMEOUT_MS;
 
-// HTTP GET helper
-static String http_get(const String &url, int *status_code) {
-  WiFiClientSecure client;
-  client.setInsecure();
-
-  HTTPClient https;
-  if (!https.begin(client, url)) {
-    if (status_code) *status_code = -1;
-    return String();
-  }
-
-  https.setConnectTimeout(10000);
-  https.setTimeout(kTimeoutMs);
-
-  const int code = https.GET();
-  if (status_code) *status_code = code;
-
-  String body;
-  if (code > 0) {
-    body = https.getString();
-  }
-
-  https.end();
-  return body;
-}
-
-// HTTP POST helper (for Serper)
-static String http_post(const String &url, const String &json_body, int *status_code) {
+// HTTP POST helper
+static String http_post(const String &url, const String &json_body, int *status_code,
+                        const String &header_name = "", const String &header_value = "") {
   WiFiClientSecure client;
   client.setInsecure();
 
@@ -49,11 +24,8 @@ static String http_post(const String &url, const String &json_body, int *status_
   https.setConnectTimeout(10000);
   https.setTimeout(kTimeoutMs);
   https.addHeader("Content-Type", "application/json");
-  // Prefer Serper key, fallback to WEB_SEARCH_API_KEY
-  if (strlen(SERPER_API_KEY) > 0) {
-    https.addHeader("X-API-KEY", SERPER_API_KEY);
-  } else if (strlen(WEB_SEARCH_API_KEY) > 0) {
-    https.addHeader("X-API-KEY", WEB_SEARCH_API_KEY);
+  if (header_name.length() > 0) {
+    https.addHeader(header_name, header_value);
   }
 
   const int code = https.POST((uint8_t *)json_body.c_str(), json_body.length());
@@ -86,11 +58,37 @@ static String json_escape(const String &src) {
   return out;
 }
 
+static String resolve_serper_key() {
+  String key = String(SERPER_API_KEY);
+  key.trim();
+  return key;
+}
+
+static String resolve_tavily_key() {
+  String key = String(TAVILY_API_KEY);
+  key.trim();
+  if (key.length() == 0) {
+    key = String(WEB_SEARCH_API_KEY);
+    key.trim();
+  }
+  return key;
+}
+
+static String resolve_tavily_base_url() {
+  String base = String(TAVILY_BASE_URL);
+  base.trim();
+  if (base.length() == 0) {
+    base = "https://api.tavily.com";
+  }
+  return base;
+}
+
 // ============ SERPER (Google Search API) ============
 
-static bool search_serper(const String &query, SearchResult *results, int *count,
+static bool search_serper(const String &query, const String &api_key,
+                          SearchResult *results, int *count,
                           String &error_out) {
-  if (strlen(SERPER_API_KEY) == 0) {
+  if (api_key.length() == 0) {
     error_out = "Serper API key not set";
     return false;
   }
@@ -106,7 +104,7 @@ static bool search_serper(const String &query, SearchResult *results, int *count
   Serial.println("[search] Serper request: " + url);
 
   int code = 0;
-  String response = http_post(url, json, &code);
+  String response = http_post(url, json, &code, "X-API-KEY", api_key);
 
   if (code != 200) {
     error_out = "Serper HTTP " + String(code);
@@ -148,19 +146,21 @@ static bool search_serper(const String &query, SearchResult *results, int *count
 
 // ============ TAVILY ============
 
-static bool search_tavily(const String &query, SearchResult *results, int *count,
+static bool search_tavily(const String &query, const String &api_key,
+                          SearchResult *results, int *count,
                           String &error_out) {
-  if (strlen(WEB_SEARCH_API_KEY) == 0) {
+  if (api_key.length() == 0) {
     error_out = "Tavily API key not set";
     return false;
   }
 
   // Build Tavily API request
-  String url = String(WEB_SEARCH_BASE_URL);
+  String url = resolve_tavily_base_url();
   if (!url.endsWith("/")) url += "/";
   url += "search";
 
   String json = "{";
+  json += "\"api_key\":\"" + json_escape(api_key) + "\",";
   json += "\"query\":\"" + json_escape(query) + "\",";
   json += "\"max_results\":" + String(kMaxResults);
   json += "}";
@@ -218,27 +218,47 @@ bool web_search(const String &query, SearchResult *results_out, int *results_cou
 
   String provider = String(WEB_SEARCH_PROVIDER);
   provider.toLowerCase();
+  if (provider.length() == 0) {
+    provider = "auto";
+  }
 
-  // Try Serper first (if set or auto)
-  if (provider == "serper" || provider == "auto") {
-    // Use SERPER_API_KEY for Serper searches
-    if (strlen(SERPER_API_KEY) > 0) {
-      Serial.println("[search] Trying Serper...");
-      if (search_serper(query, results_out, results_count, error_out)) {
-        provider_used = "Serper";
-        return true;
-      }
-      Serial.println("[search] Serper failed: " + error_out);
+  const String serper_key = resolve_serper_key();
+  const String tavily_key = resolve_tavily_key();
+
+  const bool provider_allows_serper = (provider == "serper" || provider == "auto");
+  const bool provider_allows_tavily = (provider == "tavily" || provider == "auto");
+
+  if (!provider_allows_serper && !provider_allows_tavily) {
+    error_out = "Unsupported WEB_SEARCH_PROVIDER: " + provider + " (use auto, serper, or tavily)";
+    return false;
+  }
+
+  // Default order: Serper -> Tavily.
+  if (provider_allows_serper && serper_key.length() > 0) {
+    Serial.println("[search] Trying Serper...");
+    if (search_serper(query, serper_key, results_out, results_count, error_out)) {
+      provider_used = "Serper";
+      return true;
+    }
+    Serial.println("[search] Serper failed: " + error_out);
+  }
+
+  if (provider_allows_tavily && tavily_key.length() > 0) {
+    Serial.println("[search] Trying Tavily...");
+    if (search_tavily(query, tavily_key, results_out, results_count, error_out)) {
+      provider_used = "Tavily";
+      return true;
     }
   }
 
-  // Fallback to Tavily
-  Serial.println("[search] Trying Tavily...");
-  if (search_tavily(query, results_out, results_count, error_out)) {
-    provider_used = "Tavily";
-    return true;
+  if (provider_allows_serper && serper_key.length() == 0 &&
+      provider_allows_tavily && tavily_key.length() == 0) {
+    error_out = "No search key found. Set SERPER_API_KEY or TAVILY_API_KEY/WEB_SEARCH_API_KEY.";
+  } else if (provider_allows_serper && serper_key.length() == 0 && provider == "serper") {
+    error_out = "Serper API key not set";
+  } else if (provider_allows_tavily && tavily_key.length() == 0 && provider == "tavily") {
+    error_out = "Tavily API key not set";
   }
-
   return false;
 }
 

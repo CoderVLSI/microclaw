@@ -3,8 +3,8 @@
 
 #include <Arduino.h>
 
-// Web Search (Brave or Tavily)
-// Returns summary of search results.
+// Web Search (Serper with Tavily fallback).
+// Returns an interpreted summary with source links.
 bool tool_web_search(const String &query, String &output_out);
 
 // Weather (OpenMeteo)

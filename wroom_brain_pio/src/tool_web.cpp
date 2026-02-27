@@ -1,7 +1,7 @@
 #include "tool_web.h"
 #include "brain_config.h"
-#include "model_config.h"
-#include "llm_client.h" // for json_escape & http helpers if available? No, helpers are private/static in llm_client.cpp. Use standard HTTPClient.
+#include "llm_client.h"
+#include "web_search.h"
 
 #include <Arduino.h>
 #include <HTTPClient.h>
@@ -34,152 +34,122 @@ static String http_get(const String &url, const String &header_name = "", const 
   return payload;
 }
 
-// Helper for HTTP generic post
-static String http_post(const String &url, const String &body, const String &header_name = "", const String &header_val = "", int *code_out = nullptr) {
-  if (WiFi.status() != WL_CONNECTED) return "";
-  
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-  
-  if (!http.begin(client, url)) return "";
-  http.addHeader("Content-Type", "application/json");
-  
-  if (header_name.length() > 0) {
-    http.addHeader(header_name, header_val);
-  }
-  
-  int code = http.POST(body);
-  if (code_out) *code_out = code;
-  
-  String payload = "";
-  if (code > 0) {
-    payload = http.getString();
-  }
-  http.end();
-  return payload;
-}
-
 // ======================================================================================
 // SEARCH IMPLEMENTATION
 // ======================================================================================
 
-static bool search_tavily(const String &key, const String &query, String &out) {
-  String url = "https://api.tavily.com/search";
-  
-  // JSON body for Tavily
-  JsonDocument doc;
-  doc["api_key"] = key;
-  doc["query"] = query;
-  doc["search_depth"] = "basic";
-  doc["include_answer"] = true;
-  doc["max_results"] = 3;
-  
-  String body;
-  serializeJson(doc, body);
-  
-  int code = 0;
-  String resp = http_post(url, body, "", "", &code);
-  
-  if (code < 200 || code >= 300) {
-    out = "Tavily Error: HTTP " + String(code);
+static String trim_for_search_output(String value, size_t max_chars) {
+  value.replace('\n', ' ');
+  value.replace('\r', ' ');
+  value.trim();
+  if (value.length() <= max_chars) {
+    return value;
+  }
+  if (max_chars < 4) {
+    return value.substring(0, max_chars);
+  }
+  return value.substring(0, max_chars - 3) + "...";
+}
+
+static String build_sources_block(const SearchResult *results, int count, int max_items) {
+  String out = "Sources:\n";
+  const int limit = (count < max_items) ? count : max_items;
+  for (int i = 0; i < limit; i++) {
+    out += String(i + 1) + ". " + trim_for_search_output(results[i].title, 110) + "\n";
+    out += "   " + trim_for_search_output(results[i].url, 220) + "\n";
+  }
+  return out;
+}
+
+static String build_result_pack_for_llm(const SearchResult *results, int count, int max_items) {
+  String out;
+  const int limit = (count < max_items) ? count : max_items;
+  for (int i = 0; i < limit; i++) {
+    out += "[" + String(i + 1) + "] " + trim_for_search_output(results[i].title, 140) + "\n";
+    out += "URL: " + trim_for_search_output(results[i].url, 220) + "\n";
+    String snippet = trim_for_search_output(results[i].snippet, 320);
+    if (snippet.length() > 0) {
+      out += "Snippet: " + snippet + "\n";
+    }
+    out += "\n";
+  }
+  return out;
+}
+
+static bool summarize_web_results_with_llm(const String &query, const String &provider,
+                                           const SearchResult *results, int count,
+                                           String &summary_out) {
+  const String system_prompt =
+      "You summarize web search results for a personal AI assistant. "
+      "Use only the provided snippets. Do not invent facts. "
+      "If evidence is weak or conflicting, say that clearly.";
+
+  String task = "User query: " + query + "\n";
+  task += "Search provider used: " + provider + "\n\n";
+  task += "Search snippets:\n";
+  task += build_result_pack_for_llm(results, count, 5);
+  task += "Respond in this format:\n";
+  task += "1) Direct answer (2-4 sentences)\n";
+  task += "2) Key takeaways (max 5 bullets)\n";
+  task += "3) What is uncertain (1-3 bullets)\n";
+  task += "4) Cite evidence as [1], [2], etc.\n";
+
+  String llm_err;
+  if (!llm_generate_with_custom_prompt(system_prompt, task, false, summary_out, llm_err)) {
     return false;
   }
-  
-  JsonDocument resDoc;
-  DeserializationError err = deserializeJson(resDoc, resp);
-  if (err) {
-    out = "Tavily JSON Error";
+  summary_out.trim();
+  if (summary_out.length() == 0) {
     return false;
   }
-  
-  String answer = resDoc["answer"].as<String>();
-  if (answer != "null" && answer.length() > 5) {
-    out = "Tavily Answer: " + answer + "\n\nSources:\n";
-  } else {
-    out = "Results:\n";
+  if (summary_out.length() > 3200) {
+    summary_out = summary_out.substring(0, 3200);
+    summary_out += "\n...(truncated)";
   }
-  
-  JsonArray results = resDoc["results"];
-  for (JsonObject r : results) {
-    const char* title = r["title"];
-    const char* url = r["url"];
-    const char* content = r["content"];
-    
-    out += "- [" + String(title) + "](" + String(url) + "): " + String(content).substring(0, 150) + "...\n";
-  }
-  
   return true;
 }
 
-static bool search_brave(const String &key, const String &query, String &out) {
-  // Brave Search API GET
-  // Need to URL encode query. A simple replacement for spaces is usually enough for basic queries, but better to be safe.
-  String encQuery = query;
-  encQuery.replace(" ", "%20");
-  encQuery.replace("\"", "%22");
-  encQuery.replace("&", "%26");
-  encQuery.replace("?", "%3F");
-  
-  String url = "https://api.search.brave.com/res/v1/web/search?q=" + encQuery + "&count=3";
-  
-  int code = 0;
-  String resp = http_get(url, "X-Subscription-Token", key, &code);
-  
-  if (code < 200 || code >= 300) {
-    out = "Brave Search Error: HTTP " + String(code);
-    return false;
+static String build_non_llm_summary(const String &query, const String &provider,
+                                    const SearchResult *results, int count) {
+  String out = "Search summary for \"" + query + "\" (" + provider + ")\n";
+  out += "Top findings:\n";
+  const int limit = (count < 3) ? count : 3;
+  for (int i = 0; i < limit; i++) {
+    out += "- " + trim_for_search_output(results[i].title, 120) + ": ";
+    String snippet = trim_for_search_output(results[i].snippet, 200);
+    if (snippet.length() == 0) {
+      snippet = "No snippet text provided.";
+    }
+    out += snippet + "\n";
   }
-  
-  JsonDocument resDoc;
-  DeserializationError err = deserializeJson(resDoc, resp);
-  if (err) {
-    out = "Brave JSON Error";
-    return false;
-  }
-  
-  // Parse 'web' -> 'results'
-  JsonObject web = resDoc["web"];
-  JsonArray results = web["results"];
-  if (results.isNull()) {
-    out = "No results found.";
-    return true;
-  }
-  
-  out = "Brave Results:\n";
-  for (JsonObject r : results) {
-    const char* title = r["title"];
-    const char* url = r["url"];
-    const char* desc = r["description"];
-    
-    out += "- [" + String(title ? title : "No Title") + "](" + String(url ? url : "") + ")\n  " + String(desc ? desc : "").substring(0, 200) + "\n";
-  }
-  
-  return true;
+  out += "\n" + build_sources_block(results, count, 5);
+  return out;
 }
 
 bool tool_web_search(const String &query, String &output_out) {
-  // Determine provider: Tavily > Brave (if keys exist)
-  // Check Config 
-  // User can set via /config set brave_key ... or tavily_key ...
-  
-  String tavily_key = model_config_get_api_key("tavily");
-  if (tavily_key.length() == 0) tavily_key = String(TAVILY_API_KEY);
-  
-  String brave_key = model_config_get_api_key("brave");
-  if (brave_key.length() == 0) brave_key = String(WEB_SEARCH_API_KEY);
-  
-  // Logic: Prefer Tavily if available (User said "stupid brave free tier gone")
-  if (tavily_key.length() > 5) {
-    return search_tavily(tavily_key, query, output_out);
+  SearchResult results[10];
+  int count = 0;
+  String provider;
+  String error;
+
+  if (!web_search(query, results, &count, provider, error)) {
+    output_out = "ERR: " + error;
+    return false;
   }
-  
-  if (brave_key.length() > 5) {
-    return search_brave(brave_key, query, output_out);
+
+  if (count <= 0) {
+    output_out = "No relevant web results found for: " + query;
+    return true;
   }
-  
-  output_out = "No Search API Key found! Please set 'brave' or 'tavily' key using /config set <provider>_key <value>";
-  return false;
+
+  String llm_summary;
+  if (summarize_web_results_with_llm(query, provider, results, count, llm_summary)) {
+    output_out = llm_summary + "\n\n" + build_sources_block(results, count, 5);
+    return true;
+  }
+
+  output_out = build_non_llm_summary(query, provider, results, count);
+  return true;
 }
 
 

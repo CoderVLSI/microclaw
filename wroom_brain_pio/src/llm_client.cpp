@@ -30,8 +30,8 @@ static const char *kChatSystemPrompt =
     "YOUR CAPABILITIES (use these proactively when relevant):\n"
     "🧠 Memory: remember <note>, memory_read, memory_clear, user_read\n"
     "📋 Tasks: task_add, task_list, task_done, task_clear\n"
-    "⏰ Scheduling: cron_add <expr>|<cmd>, cron_list, reminder_set_daily <HH:MM> <msg>\n"
-    "🔍 Web Search: search <query> (Tavily/Brave)\n"
+    "⏰ Scheduling: cron_add <expr>|<cmd> OR cron_add every <sec>|<cmd> OR cron_add at <epoch>|<cmd>, cron_list, cron_remove <id>, cron_pause <id>, cron_resume <id>, reminder_set_daily <HH:MM> <msg>\n"
+    "🔍 Web Search: search <query> (Serper/Tavily)\n"
     "🌤 Weather: weather <location>\n"
     "🎨 Image Gen: generate_image <prompt>\n"
     "📸 Media: Analyze photos/documents sent to you (auto-triggered)\n"
@@ -57,7 +57,7 @@ static const char *kHeartbeatSystemPrompt =
 static const char *kRouteSystemPrompt =
     "Route user text to one tool command if obvious.\n"
     "Tools:\n"
-    "- search <query>: Web search (Brave/Tavily)\n"
+    "- search <query>: Web search (Serper/Tavily)\n"
     "- weather <location>: Get weather\n"
     "- time: Get current time\n"
     "- generate_image <prompt>: Create image\n"
@@ -157,6 +157,27 @@ bool contains_ci(const String &text, const char *needle_lower) {
   String hay = text;
   hay.toLowerCase();
   return hay.indexOf(needle_lower) >= 0;
+}
+
+int compute_llm_timeout_ms(size_t request_body_len) {
+  long timeout_ms = (long)LLM_TIMEOUT_MS;
+  // Large prompt payloads need extra server-side generation time.
+  if (request_body_len >= 20000) {
+    timeout_ms += 120000;
+  } else if (request_body_len >= 12000) {
+    timeout_ms += 90000;
+  } else if (request_body_len >= 7000) {
+    timeout_ms += 60000;
+  } else if (request_body_len >= 3500) {
+    timeout_ms += 30000;
+  }
+  if (timeout_ms < 20000) {
+    timeout_ms = 20000;
+  }
+  if (timeout_ms > 420000) {
+    timeout_ms = 420000;
+  }
+  return (int)timeout_ms;
 }
 
 String join_url(const String &base, const String &path) {
@@ -331,7 +352,7 @@ HttpResult http_post_json(const String &url, const String &body,
     }
 
     https.setConnectTimeout(12000);
-    https.setTimeout(LLM_TIMEOUT_MS);
+    https.setTimeout(compute_llm_timeout_ms(body.length()));
     https.addHeader("Content-Type", "application/json");
 
     if (h1_name.length()) {
@@ -566,6 +587,16 @@ static bool is_quota_error(const String &error) {
          (lc.indexOf("rate limit") >= 0) ||
          (lc.indexOf("billing") >= 0) ||
          (lc.indexOf("limit exceeded") >= 0);
+}
+
+static bool is_timeout_error(const String &error) {
+  String lc = error;
+  lc.toLowerCase();
+  return (lc.indexOf("timeout") >= 0) ||
+         (lc.indexOf("timed out") >= 0) ||
+         (lc.indexOf("http 408") >= 0) ||
+         (lc.indexOf("network error") >= 0) ||
+         (lc.indexOf("connection reset") >= 0);
 }
 
 // Try to call a specific provider by name
@@ -931,7 +962,7 @@ bool llm_generate_reply(const String &message, String &reply_out, String &error_
   // Inject real schedule state so LLM doesn't hallucinate reminder/cron status.
   String schedule_ctx = build_schedule_context();
   schedule_ctx = trim_with_ellipsis(schedule_ctx, kMaxScheduleChars);
-  system_prompt += "\n\nACTIVE SCHEDULE STATE (source of truth from cron.md + reminder store):\n" +
+  system_prompt += "\n\nACTIVE SCHEDULE STATE (source of truth from cron.json + reminder store):\n" +
                    schedule_ctx +
                    "\nWhen user asks about reminders/cron, rely on this state before suggesting changes.";
 
@@ -1011,6 +1042,20 @@ bool llm_generate_reply(const String &message, String &reply_out, String &error_
   }
 
   bool result = llm_generate_with_custom_prompt(system_prompt, task, false, reply_out, error_out);
+  if (!result && long_user_message && is_timeout_error(error_out)) {
+    String retry_system = String(kChatSystemPrompt) +
+                          "\nFocus on the user's latest message only. "
+                          "Skip old context and respond directly.";
+    String retry_task = trim_with_ellipsis(message, 2800);
+    String retry_error;
+    if (llm_generate_with_custom_prompt(retry_system, retry_task, false, reply_out, retry_error)) {
+      result = true;
+      error_out = "";
+      Serial.println("[llm] Long prompt retry succeeded with compact context");
+    } else if (retry_error.length() > 0) {
+      error_out += " | compact retry: " + retry_error;
+    }
+  }
 
   // Auto-save important info to MEMORY.md
   if (result) {

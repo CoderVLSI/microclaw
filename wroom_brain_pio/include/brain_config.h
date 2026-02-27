@@ -172,7 +172,7 @@
 #endif
 
 #ifndef WEB_SEARCH_BASE_URL
-#define WEB_SEARCH_BASE_URL "https://api.search.brave.com"
+#define WEB_SEARCH_BASE_URL "https://api.tavily.com"
 #endif
 
 #ifndef TAVILY_API_KEY
@@ -251,6 +251,11 @@
 // GPIO/Hardware control (relay, LED flash, sensor read)
 #ifndef ENABLE_GPIO
 #define ENABLE_GPIO 0
+#endif
+
+// Voice capture (I2S microphone)
+#ifndef ENABLE_VOICE
+#define ENABLE_VOICE 0
 #endif
 
 #endif
